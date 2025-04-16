@@ -88,7 +88,7 @@ def train_net(model, params, weights, path, trainFrames, i):
             epsilon -= (1/train_frames)
 
         # We died, so update stuff.
-        if state[7] == 1:  # terminal state
+        if state[0][7] == 1:  # terminal state - fixed indexing
             # Log the car's distance at this T.
             data_collect.append([t, car_distance])
 
@@ -144,7 +144,7 @@ def process_minibatch(minibatch, model):
         y[:] = old_qval[:]
         
         # Update the value for the action we took.
-        if new_state_m[7] == 1:  # terminal state
+        if new_state_m[0][7] == 1:  # terminal state
             update = reward_m
         else:  # non-terminal state
             update = (reward_m + (GAMMA * maxQ))
@@ -173,7 +173,7 @@ def launch_learn(params):
         print("Starting test.")
         # Train.
         model = neural_net(NUM_INPUT, params['nn'])
-        train_net(model, params)
+        train_net(model, params, weights, path, TRAIN_FRAMES, 0)
     else:
         print("Already tested.")
 
@@ -207,7 +207,7 @@ if __name__ == "__main__":
                     }
                     param_list.append(params)
 
-        for param_set in param_list:
+        for i, param_set in enumerate(param_list):
             launch_learn(param_set)
 
     else:
@@ -218,4 +218,4 @@ if __name__ == "__main__":
             "nn": nn_param
         }
         model = neural_net(NUM_INPUT, nn_param)
-        train_net(model, params, weights, path, TRAIN_FRAMES)
+        train_net(model, params, weights, path, TRAIN_FRAMES, 0)

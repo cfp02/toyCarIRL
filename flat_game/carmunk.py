@@ -7,7 +7,7 @@ from pygame.color import THECOLORS
 
 import pymunk
 from pymunk.vec2d import Vec2d
-from pymunk.pygame_util import draw
+from pymunk.pygame_util import DrawOptions
 
 # PyGame init
 width = 1000
@@ -18,6 +18,9 @@ clock = pygame.time.Clock()
 
 # Turn off alpha since we don't use it.
 screen.set_alpha(None)
+
+# Create a draw options object for pymunk
+draw_options = DrawOptions(screen)
 
 # Showing sensors and redrawing slows things down.
 flag = 1
@@ -62,50 +65,39 @@ class GameState:
             s.group = 1
             s.collision_type = 1
             s.color = THECOLORS['red']
-        self.space.add(static)
+            self.space.add(s)
 
-        # Create some obstacles, semi-randomly.
-        # We'll create three and they'll move around to prevent over-fitting.
+        # Create obstacles
         self.obstacles = []
-        #self.obstacles.append(self.create_obstacle(380, 220, 70, "yellow"))
-        #self.obstacles.append(self.create_obstacle(250, 500, 70, "yellow"))
-        #self.obstacles.append(self.create_obstacle(780, 330, 70, "brown"))
-        #self.obstacles.append(self.create_obstacle(530, 500, 70, "brown"))
+        self.obstacles.append(self.create_obstacle([100, 100], [100, 585], 7, "yellow"))
+        self.obstacles.append(self.create_obstacle([450, 600], [100, 600], 7, "yellow"))
+        self.obstacles.append(self.create_obstacle([900, 100], [900, 585], 7, "yellow"))
+        self.obstacles.append(self.create_obstacle([900, 600], [550, 600], 7, "yellow"))
 
-        self.obstacles.append(self.create_obstacle([100, 100], [100, 585] , 7, "yellow"))
-        self.obstacles.append(self.create_obstacle([450, 600], [100, 600] , 7, "yellow"))
-        self.obstacles.append(self.create_obstacle([900, 100], [900, 585] , 7, "yellow"))
-        self.obstacles.append(self.create_obstacle([900, 600], [550, 600] , 7, "yellow"))
+        self.obstacles.append(self.create_obstacle([200, 100], [200, 480], 7, "yellow"))
+        self.obstacles.append(self.create_obstacle([450, 500], [200, 500], 7, "yellow"))
+        self.obstacles.append(self.create_obstacle([800, 100], [800, 480], 7, "yellow"))
+        self.obstacles.append(self.create_obstacle([800, 500], [550, 500], 7, "yellow"))
 
-        self.obstacles.append(self.create_obstacle([200, 100], [200, 480] , 7, "yellow"))
-        self.obstacles.append(self.create_obstacle([450, 500], [200, 500] , 7, "yellow"))
-        self.obstacles.append(self.create_obstacle([800, 100], [800, 480] , 7, "yellow"))
-        self.obstacles.append(self.create_obstacle([800, 500], [550, 500] , 7, "yellow"))
+        self.obstacles.append(self.create_obstacle([300, 100], [300, 350], 7, "yellow"))
+        self.obstacles.append(self.create_obstacle([700, 380], [300, 380], 7, "yellow"))
+        self.obstacles.append(self.create_obstacle([700, 100], [700, 350], 7, "yellow"))
 
-        self.obstacles.append(self.create_obstacle([300, 100], [300, 350] , 7, "yellow"))
-        self.obstacles.append(self.create_obstacle([700, 380], [300, 380] , 7, "yellow"))
-        self.obstacles.append(self.create_obstacle([700, 100], [700, 350] , 7, "yellow"))
+        self.obstacles.append(self.create_obstacle([400, 100], [600, 100], 7, "brown"))
+        self.obstacles.append(self.create_obstacle([400, 200], [600, 200], 7, "brown"))
+        self.obstacles.append(self.create_obstacle([400, 300], [600, 300], 7, "brown"))
 
-        self.obstacles.append(self.create_obstacle([400, 100], [600, 100] , 7, "brown"))
-        self.obstacles.append(self.create_obstacle([400, 200], [600, 200] , 7, "brown"))
-        self.obstacles.append(self.create_obstacle([400, 300], [600, 300] , 7, "brown"))
-
-        self.obstacles.append(self.create_obstacle([700, 370], [300, 370] , 7, "brown"))
-        self.obstacles.append(self.create_obstacle([310, 100], [310, 350] , 7, "brown"))
-        self.obstacles.append(self.create_obstacle([690, 100], [690, 350] , 7, "brown"))
-
-
-
+        self.obstacles.append(self.create_obstacle([700, 370], [300, 370], 7, "brown"))
+        self.obstacles.append(self.create_obstacle([310, 100], [310, 350], 7, "brown"))
+        self.obstacles.append(self.create_obstacle([690, 100], [690, 350], 7, "brown"))
 
         # Create a cat.
         #self.create_cat()
 
     def create_obstacle(self, xy1, xy2, r, color):
-        c_body = pymunk.Body(pymunk.inf, pymunk.inf)
-        #c_shape = pymunk.Circle(c_body, r)
+        # Create static body for obstacles
+        c_body = pymunk.Body(body_type=pymunk.Body.STATIC)
         c_shape = pymunk.Segment(c_body, xy1, xy2, r)
-        #c_shape.elasticity = 1.0
-        #c_body.position = x, y
         c_shape.friction = 1.
         c_shape.group = 1
         c_shape.collision_type = 1
@@ -126,14 +118,14 @@ class GameState:
 
     def create_car(self, x, y, r):
         inertia = pymunk.moment_for_circle(1, 0, 14, (0, 0))
-        self.car_body = pymunk.Body(1, inertia)
+        self.car_body = pymunk.Body(1, inertia)  # Reduced mass to 1
         self.car_body.position = x, y
         self.car_shape = pymunk.Circle(self.car_body, r)
         self.car_shape.color = THECOLORS["green"]
         self.car_shape.elasticity = 1.0
         self.car_body.angle = 1.4
         driving_direction = Vec2d(1, 0).rotated(self.car_body.angle)
-        self.car_body.apply_impulse(driving_direction)
+        self.car_body.apply_impulse_at_local_point(driving_direction)
         self.space.add(self.car_body, self.car_shape)
 
     def frame_step(self, action):
@@ -142,20 +134,20 @@ class GameState:
         elif action == 1:  # Turn right.
             self.car_body.angle += .3
 
-        #Move obstacles.
-        #if self.num_steps % 100 == 0:
-            #self.move_obstacles()
+        # Move obstacles - commented out to keep them static
+        # if self.num_steps % 100 == 0:
+        #     self.move_obstacles()
 
-        # Move cat.
-        #if self.num_steps % 5 == 0:
-            #self.move_cat()
+        # Move cat - commented out as it's not needed
+        # if self.num_steps % 5 == 0:
+        #     self.move_cat()
 
         driving_direction = Vec2d(1, 0).rotated(self.car_body.angle)
         self.car_body.velocity = 100 * driving_direction
 
         # Update the screen and stuff.
-        screen.fill(THECOLORS["black"])
-        draw(screen, self.space)
+        screen.fill(THECOLORS["white"])
+        self.space.debug_draw(draw_options)
         self.space.step(1./10)
         if draw_screen:
             pygame.display.flip()
@@ -174,7 +166,6 @@ class GameState:
         else:
             readings.append(0)
             
-            
         reward = np.dot(self.W, readings)
         state = np.array([readings])
 
@@ -183,11 +174,8 @@ class GameState:
         return reward, state, readings
 
     def move_obstacles(self):
-        # Randomly move obstacles around.
-        for obstacle in self.obstacles:
-            speed = random.randint(1, 5)
-            direction = Vec2d(1, 0).rotated(self.car_body.angle + random.randint(-2, 2))
-            obstacle.velocity = speed * direction
+        # Obstacles are now static, so this method does nothing
+        pass
 
     def move_cat(self):
         speed = random.randint(20, 200)
@@ -211,8 +199,8 @@ class GameState:
             self.crashed = False
             for i in range(10):
                 self.car_body.angle += .2  # Turn a little.
-                #screen.fill(THECOLORS["red"])  # Red is scary!
-                draw(screen, self.space)
+                screen.fill(THECOLORS["white"])
+                self.space.debug_draw(draw_options)
                 self.space.step(1./10)
                 if draw_screen:
                     pygame.display.flip()
