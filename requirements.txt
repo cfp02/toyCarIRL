@@ -1,0 +1,8 @@
+numpy
+scipy
+cvxopt
+scikit-learn
+keras
+pymunk
+pygame
+matplotlib
