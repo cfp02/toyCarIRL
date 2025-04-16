@@ -3,6 +3,7 @@ scipy
 cvxopt
 scikit-learn
 keras
+tensorflow
 pymunk
 pygame
 matplotlib

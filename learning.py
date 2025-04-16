@@ -12,7 +12,6 @@ TUNING = False  # If False, just use arbitrary, pre-selected params.
 TRAIN_FRAMES = 100000 # to train for 100K frames in total
 
 def train_net(model, params, weights, path, trainFrames, i):
-
     filename = params_to_filename(params)
 
     observe = 1000  # Number of frames to observe before training.
@@ -41,7 +40,6 @@ def train_net(model, params, weights, path, trainFrames, i):
 
     # Run the frames.
     while t < train_frames:
-
         t += 1
         car_distance += 1
 
@@ -50,9 +48,8 @@ def train_net(model, params, weights, path, trainFrames, i):
             action = np.random.randint(0, 3)  # random #3
         else:
             # Get Q values for each action.
-            qval = model.predict(state, batch_size=1)
-            action = (np.argmax(qval))  # best
-            #print ("action under learner ", action)
+            qval = model.predict(state.reshape(1, NUM_INPUT), verbose=0)
+            action = np.argmax(qval[0])  # best
 
         # Take action, observe new state and get our treat.
         reward, new_state, temp2 = game_state.frame_step(action)
@@ -62,7 +59,6 @@ def train_net(model, params, weights, path, trainFrames, i):
 
         # If we're done observing, start training.
         if t > observe:
-
             # If we've stored enough in our buffer, pop the oldest.
             if len(replay) > buffer:
                 replay.pop(0)
@@ -76,8 +72,11 @@ def train_net(model, params, weights, path, trainFrames, i):
             # Train the model on this batch.
             history = LossHistory()
             model.fit(
-                X_train, y_train, batch_size=batchSize,
-                nb_epoch=1, verbose=0, callbacks=[history]
+                X_train, y_train, 
+                batch_size=batchSize,
+                epochs=1, 
+                verbose=0, 
+                callbacks=[history]
             )
             loss_log.append(history.losses)
 
@@ -89,7 +88,7 @@ def train_net(model, params, weights, path, trainFrames, i):
             epsilon -= (1/train_frames)
 
         # We died, so update stuff.
-        if state[0][7] == 1:
+        if state[7] == 1:  # terminal state
             # Log the car's distance at this T.
             data_collect.append([t, car_distance])
 
@@ -100,10 +99,6 @@ def train_net(model, params, weights, path, trainFrames, i):
             # Time it.
             tot_time = timeit.default_timer() - start_time
             fps = car_distance / tot_time
-
-            # Output some stuff so we can watch.
-            #print("Max: %d at %d\tepsilon %f\t(%d)\t%f fps" %
-                  #(max_car_distance, t, epsilon, car_distance, fps))
 
             # Reset.
             car_distance = 0
@@ -119,8 +114,6 @@ def train_net(model, params, weights, path, trainFrames, i):
     # Log results after we're done all frames.
     log_results(filename, data_collect, loss_log)
 
-
-
 def log_results(filename, data_collect, loss_log):
     # Save the results to a file so we can graph it later.
     with open('results/sonar-frames/learn_data-' + filename + '.csv', 'w') as data_dump:
@@ -132,7 +125,6 @@ def log_results(filename, data_collect, loss_log):
         for loss_item in loss_log:
             wr.writerow(loss_item)
 
-
 def process_minibatch(minibatch, model):
     """This does the heavy lifting, aka, the training. It's super jacked."""
     X_train = []
@@ -143,37 +135,32 @@ def process_minibatch(minibatch, model):
         # Get stored values.
         old_state_m, action_m, reward_m, new_state_m = memory
         # Get prediction on old state.
-        old_qval = model.predict(old_state_m, batch_size=1)
+        old_qval = model.predict(old_state_m.reshape(1, NUM_INPUT), verbose=0)
         # Get prediction on new state.
-        newQ = model.predict(new_state_m, batch_size=1)
-        # Get our best move. I think?
-        maxQ = np.max(newQ)
-        y = np.zeros((1, 3)) #3
+        newQ = model.predict(new_state_m.reshape(1, NUM_INPUT), verbose=0)
+        # Get our best move.
+        maxQ = np.max(newQ[0])
+        y = np.zeros((1, 3))
         y[:] = old_qval[:]
-        # Check for terminal state.
-        #if reward_m != -500:  # non-terminal state
-            #update = (reward_m + (GAMMA * maxQ))
-        #else:  # terminal state
-            #update = reward_m
-        if new_state_m[0][7] == 1:  #terminal state
+        
+        # Update the value for the action we took.
+        if new_state_m[7] == 1:  # terminal state
             update = reward_m
         else:  # non-terminal state
             update = (reward_m + (GAMMA * maxQ))
-        # Update the value for the action we took.
+            
         y[0][action_m] = update
         X_train.append(old_state_m.reshape(NUM_INPUT,))
-        y_train.append(y.reshape(3,)) #3
+        y_train.append(y.reshape(3,))
 
     X_train = np.array(X_train)
     y_train = np.array(y_train)
 
     return X_train, y_train
 
-
 def params_to_filename(params):
     return str(params['nn'][0]) + '-' + str(params['nn'][1]) + '-' + \
             str(params['batchSize']) + '-' + str(params['buffer'])
-
 
 def launch_learn(params):
     filename = params_to_filename(params)
@@ -199,8 +186,6 @@ def IRL_helper(weights, path, trainFrames, i):
     }
     model = neural_net(NUM_INPUT, nn_param)
     train_net(model, params, weights, path, trainFrames, i)
-
-
 
 if __name__ == "__main__":
     weights = [ 0.04924175 ,-0.36950358 ,-0.15510825 ,-0.65179867 , 0.2985827 , -0.23237454 , 0.21222881 ,-0.47323531]
