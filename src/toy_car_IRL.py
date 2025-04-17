@@ -169,19 +169,19 @@ if __name__ == "__main__":
         1.5538e03,
     ]
     # ^feature expectations for the "nasty bumping" behavior
-    expertPolicyFindRed = [
-        5.39704807,
-        3.46564062,
-        3.32507319,
-        0.0,
-        9.99757251,
-        0.0,
-        0.0,
-        0.0,
+    expertPolicyCustom = [
+        7.80420871e+00,
+        4.12331575e+00,
+        7.74931451e+00,
+        3.01770286e-01,
+        9.65927729e+00,
+        1.10452189e-05,
+        3.89413763e-02,
+        5.07528786e-04
     ]
 
     epsilon = 0.1
     irlearner = irlAgent(
-        randomPolicyFE, expertPolicyFindRed, epsilon, NUM_STATES, FRAMES, BEHAVIOR
+        randomPolicyFE, expertPolicyCustom, epsilon, NUM_STATES, FRAMES, BEHAVIOR
     )
     print(irlearner.optimalWeightFinder())

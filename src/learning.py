@@ -52,7 +52,7 @@ def train_net(model, params, weights, path, trainFrames, i):
         else:
             # Get Q values for each action.
             qval = model.predict(state.reshape(1, NUM_INPUT), verbose=0)
-            action = np.argmax(qval[0])  # best
+            action = int(np.argmax(qval[0]))  # best
 
         # Take action, observe new state and get our treat.
         reward, new_state, temp2 = game_state.frame_step(action)

@@ -32,7 +32,7 @@ def play(model, weights, track_file="tracks/default.json"):
         # print ("Action ", action)
 
         # Take action.
-        immediateReward, state, readings = game_state.frame_step(action)
+        immediateReward, state, readings = game_state.frame_step(int(action))
         # print ("immeditate reward:: ", immediateReward)
         # print ("readings :: ", readings)
         # start recording feature expectations only after 100 frames

@@ -24,7 +24,7 @@ GAMMA = 0.9  # the discount factor for RL algorithm
 
 def play(obstacle_file=None):
     car_distance = 0
-    weights = [1, 1, 1, 1, 1, 1, 1, 1]  # just some random weights
+    weights = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]  # just some random weights
     game_state = (
         carmunk.GameState(weights)
         if obstacle_file is None
