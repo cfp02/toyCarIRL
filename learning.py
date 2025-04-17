@@ -1,24 +1,27 @@
-from flat_game import carmunk
-import numpy as np
-import random
 import csv
-from nn import neural_net, LossHistory
 import os.path
+import random
 import timeit
 
-NUM_INPUT = 8 
+import numpy as np
+
+from flat_game import carmunk
+from nn import LossHistory, neural_net
+
+NUM_INPUT = 8
 GAMMA = 0.9  # Forgetting.
 TUNING = False  # If False, just use arbitrary, pre-selected params.
-TRAIN_FRAMES = 100000 # to train for 100K frames in total
+TRAIN_FRAMES = 100000  # to train for 100K frames in total
+
 
 def train_net(model, params, weights, path, trainFrames, i):
     filename = params_to_filename(params)
 
     observe = 1000  # Number of frames to observe before training.
     epsilon = 1
-    train_frames = trainFrames  # Number of frames to play. 
-    batchSize = params['batchSize']
-    buffer = params['buffer']
+    train_frames = trainFrames  # Number of frames to play.
+    batchSize = params["batchSize"]
+    buffer = params["buffer"]
 
     # Just stuff used below.
     max_car_distance = 0
@@ -72,11 +75,12 @@ def train_net(model, params, weights, path, trainFrames, i):
             # Train the model on this batch.
             history = LossHistory()
             model.fit(
-                X_train, y_train, 
+                X_train,
+                y_train,
                 batch_size=batchSize,
-                epochs=1, 
-                verbose=0, 
-                callbacks=[history]
+                epochs=1,
+                verbose=0,
+                callbacks=[history],
             )
             loss_log.append(history.losses)
 
@@ -85,7 +89,7 @@ def train_net(model, params, weights, path, trainFrames, i):
 
         # Decrement epsilon over time.
         if epsilon > 0.1 and t > observe:
-            epsilon -= (1/train_frames)
+            epsilon -= 1 / train_frames
 
         # We died, so update stuff.
         if state[0][7] == 1:  # terminal state - fixed indexing
@@ -104,26 +108,37 @@ def train_net(model, params, weights, path, trainFrames, i):
             car_distance = 0
             start_time = timeit.default_timer()
 
-        # Save the model 
+        # Save the model
         if t % train_frames == 0:
-            model.save_weights('saved-models_'+ path +'/evaluatedPolicies/'+str(i)+'-'+ filename + '-' +
-                               str(t) + '.h5',
-                               overwrite=True)
+            model.save_weights(
+                "saved-models_"
+                + path
+                + "/evaluatedPolicies/"
+                + str(i)
+                + "-"
+                + filename
+                + "-"
+                + str(t)
+                + ".h5",
+                overwrite=True,
+            )
             print("Saving model %s - %d" % (filename, t))
 
     # Log results after we're done all frames.
     log_results(filename, data_collect, loss_log)
 
+
 def log_results(filename, data_collect, loss_log):
     # Save the results to a file so we can graph it later.
-    with open('results/sonar-frames/learn_data-' + filename + '.csv', 'w') as data_dump:
+    with open("results/sonar-frames/learn_data-" + filename + ".csv", "w") as data_dump:
         wr = csv.writer(data_dump)
         wr.writerows(data_collect)
 
-    with open('results/sonar-frames/loss_data-' + filename + '.csv', 'w') as lf:
+    with open("results/sonar-frames/loss_data-" + filename + ".csv", "w") as lf:
         wr = csv.writer(lf)
         for loss_item in loss_log:
             wr.writerow(loss_item)
+
 
 def process_minibatch(minibatch, model):
     """This does the heavy lifting, aka, the training. It's super jacked."""
@@ -142,69 +157,80 @@ def process_minibatch(minibatch, model):
         maxQ = np.max(newQ[0])
         y = np.zeros((1, 3))
         y[:] = old_qval[:]
-        
+
         # Update the value for the action we took.
         if new_state_m[0][7] == 1:  # terminal state
             update = reward_m
         else:  # non-terminal state
-            update = (reward_m + (GAMMA * maxQ))
-            
+            update = reward_m + (GAMMA * maxQ)
+
         y[0][action_m] = update
-        X_train.append(old_state_m.reshape(NUM_INPUT,))
-        y_train.append(y.reshape(3,))
+        X_train.append(
+            old_state_m.reshape(
+                NUM_INPUT,
+            )
+        )
+        y_train.append(
+            y.reshape(
+                3,
+            )
+        )
 
     X_train = np.array(X_train)
     y_train = np.array(y_train)
 
     return X_train, y_train
 
+
 def params_to_filename(params):
-    return str(params['nn'][0]) + '-' + str(params['nn'][1]) + '-' + \
-            str(params['batchSize']) + '-' + str(params['buffer'])
+    return (
+        str(params["nn"][0])
+        + "-"
+        + str(params["nn"][1])
+        + "-"
+        + str(params["batchSize"])
+        + "-"
+        + str(params["buffer"])
+    )
+
 
 def launch_learn(params):
     filename = params_to_filename(params)
     print("Trying %s" % filename)
     # Make sure we haven't run this one.
-    if not os.path.isfile('results/sonar-frames/loss_data-' + filename + '.csv'):
+    if not os.path.isfile("results/sonar-frames/loss_data-" + filename + ".csv"):
         # Create file so we don't double test when we run multiple
         # instances of the script at the same time.
-        open('results/sonar-frames/loss_data-' + filename + '.csv', 'a').close()
+        open("results/sonar-frames/loss_data-" + filename + ".csv", "a").close()
         print("Starting test.")
         # Train.
-        model = neural_net(NUM_INPUT, params['nn'])
+        model = neural_net(NUM_INPUT, params["nn"])
         train_net(model, params, weights, path, TRAIN_FRAMES, 0)
     else:
         print("Already tested.")
 
+
 def IRL_helper(weights, path, trainFrames, i):
     nn_param = [164, 150]
-    params = {
-        "batchSize": 100,
-        "buffer": 50000,
-        "nn": nn_param
-    }
+    params = {"batchSize": 100, "buffer": 50000, "nn": nn_param}
     model = neural_net(NUM_INPUT, nn_param)
     train_net(model, params, weights, path, trainFrames, i)
 
+
 if __name__ == "__main__":
-    weights = [ 0.04924175 ,-0.36950358 ,-0.15510825 ,-0.65179867 , 0.2985827 , -0.23237454 , 0.21222881 ,-0.47323531]
-    path = 'default'
+    # weights = [0.04924175, -0.36950358, -0.15510825, -0.65179867, 0.2985827, -0.23237454, 0.21222881, -0.47323531]
+    weights = [5.39704807, 3.46564062, 3.32507319, 0.0, 9.99757251, 0.0, 0.0, 0.0]
+    path = "default"
     if TUNING:
         param_list = []
-        nn_params = [[164, 150], [256, 256],
-                     [512, 512], [1000, 1000]]
+        nn_params = [[164, 150], [256, 256], [512, 512], [1000, 1000]]
         batchSizes = [40, 100, 400]
         buffers = [10000, 50000]
 
         for nn_param in nn_params:
             for batchSize in batchSizes:
                 for buffer in buffers:
-                    params = {
-                        "batchSize": batchSize,
-                        "buffer": buffer,
-                        "nn": nn_param
-                    }
+                    params = {"batchSize": batchSize, "buffer": buffer, "nn": nn_param}
                     param_list.append(params)
 
         for i, param_set in enumerate(param_list):
@@ -212,10 +238,6 @@ if __name__ == "__main__":
 
     else:
         nn_param = [164, 150]
-        params = {
-            "batchSize": 100,
-            "buffer": 50000,
-            "nn": nn_param
-        }
+        params = {"batchSize": 100, "buffer": 50000, "nn": nn_param}
         model = neural_net(NUM_INPUT, nn_param)
         train_net(model, params, weights, path, TRAIN_FRAMES, 0)

@@ -36,7 +36,7 @@ def play(obstacle_file=None):
 
     # Create a clock to control frame rate
     clock = pygame.time.Clock()
-    FPS = 15  # Target frames per second
+    FPS = 5  # Target frames per second
 
     running = True
     action = 2  # Default action is forward
