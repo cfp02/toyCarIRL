@@ -146,7 +146,7 @@ class GameState:
         self.car_body.velocity = 100 * driving_direction
 
         # Update the screen and stuff.
-        screen.fill(THECOLORS["white"])
+        screen.fill(THECOLORS["black"])
         self.space.debug_draw(draw_options)
         self.space.step(1./10)
         if draw_screen:
@@ -199,7 +199,7 @@ class GameState:
             self.crashed = False
             for i in range(10):
                 self.car_body.angle += .2  # Turn a little.
-                screen.fill(THECOLORS["white"])
+                screen.fill(THECOLORS["black"])
                 self.space.debug_draw(draw_options)
                 self.space.step(1./10)
                 if draw_screen:
@@ -308,7 +308,7 @@ class GameState:
         y_change = (y_1 - y_2) * math.cos(radians) - \
             (x_1 - x_2) * math.sin(radians)
         new_x = x_change + x_1
-        new_y = height - (y_change + y_1)
+        new_y = y_change + y_1
         return int(new_x), int(new_y)
 
     # def get_track_or_not(self, reading):
