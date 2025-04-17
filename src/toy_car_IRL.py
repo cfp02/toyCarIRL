@@ -1,5 +1,6 @@
 # IRL algorith developed for the toy car obstacle avoidance problem for testing.
 import logging
+import argparse
 
 import numpy as np
 from cvxopt import (
@@ -7,24 +8,25 @@ from cvxopt import (
     solvers,  # convex optimization library
 )
 
-from learning import IRL_helper  # get the Reinforcement learner
-from nn import neural_net  # construct the nn and send to playing
+from train import train as IRL_helper  # updated import for new training function
+from nn import DQNAgent  # import the DQNAgent instead of neural_net
 from playing import (
     play,
 )  # get the RL Test agent, gives out feature expectations after 2000 frames
 
-NUM_STATES = 8
-BEHAVIOR = "red"  # yellow/brown/red/bumping
+NUM_STATES = 10
+BEHAVIOR = "custom"  # yellow/brown/red/bumping
 FRAMES = 100000  # number of RL training frames per iteration of IRL
 
 
 class irlAgent:
-    def __init__(self, randomFE, expertFE, epsilon, num_states, num_frames, behavior):
+    def __init__(self, randomFE, expertFE, epsilon, num_states, num_frames, behavior, track_file="tracks/default.json"):
         self.randomPolicy = randomFE
         self.expertPolicy = expertFE
         self.num_states = num_states
         self.num_frames = num_frames
         self.behavior = behavior
+        self.track_file = track_file
         self.epsilon = epsilon  # termination when t<0.1
         self.randomT = np.linalg.norm(
             np.asarray(self.expertPolicy) - np.asarray(self.randomPolicy)
@@ -38,24 +40,45 @@ class irlAgent:
 
     def getRLAgentFE(
         self, W, i
-    ):  # get the feature expectations of a new poliicy using RL agent
+    ):  # get the feature expectations of a new policy using RL agent
+        # Create directories for saving models
+        save_dir = f"saved-models/saved-models_{self.behavior}/evaluatedPolicies"
+        os.makedirs(save_dir, exist_ok=True)
+        
+        # Set up checkpoint directory for the training function
+        checkpoint_dir = f"{save_dir}/checkpoints_{i}"
+        
+        # Create and train the agent with the new training function
+        agent = DQNAgent(
+            state_size=self.num_states,
+            action_size=3,  # Left, Right, No-op
+            hidden_sizes=[164, 150],  # Match the architecture in the original code
+            use_prioritized_replay=False  # Match original behavior
+        )
+        
+        # Train the agent using the new training function with custom track
         IRL_helper(
-            W, self.behavior, self.num_frames, i
-        )  # train the agent and save the model in a file used below
+            agent=agent,
+            env_weights=W,
+            env_path=self.track_file,  # Use the provided track file
+            num_episodes=self.num_frames // 100,  # Convert frames to episodes
+            max_steps_per_episode=1000,
+            checkpoint_dir=checkpoint_dir,
+            log_dir=f"{save_dir}/logs_{i}"
+        )
+        
+        # Save the final model with the expected naming convention
         saved_model = (
-            "saved-models/"
-            + "saved-models_"
-            + self.behavior
-            + "/evaluatedPolicies/"
-            + str(i)
-            + "-164-150-100-50000-"
-            + str(self.num_frames)
-            + ".h5"
-        )  # use the saved model to get the FE
-        model = neural_net(self.num_states, [164, 150], saved_model)
+            f"{save_dir}/{i}-164-150-100-50000-{self.num_frames}.pt"
+        )
+        
+        # Make sure to save the model in the expected location
+        agent.save(saved_model)
+        
+        # Use the trained agent to get feature expectations with the same track
         return play(
-            model, W
-        )  # return feature expectations by executing the learned policy
+            agent, W, self.track_file
+        )  # pass track file to play function
 
     def policyListUpdater(self, W, i):  # add the policyFE list and differences
         tempFE = self.getRLAgentFE(
@@ -112,76 +135,99 @@ class irlAgent:
 
 
 if __name__ == "__main__":
+    # Need to import os here since we use it in the getRLAgentFE method
+    import os
+    
+    # Set up argument parser
+    parser = argparse.ArgumentParser(description="Run IRL on toy car environment")
+    parser.add_argument(
+        "--track", 
+        "-t", 
+        type=str, 
+        default="tracks/default.json",
+        help="Path to track file (default: tracks/default.json)"
+    )
+    parser.add_argument(
+        "--behavior", 
+        "-b", 
+        type=str, 
+        default="custom",
+        help="Behavior name (default: custom)"
+    )
+    parser.add_argument(
+        "--frames", 
+        "-f", 
+        type=int, 
+        default=100000,
+        help="Number of frames for training (default: 100000)"
+    )
+    args = parser.parse_args()
+    
+    # Update global variables from arguments
+    BEHAVIOR = args.behavior
+    FRAMES = args.frames
+    track_file = args.track
+    
+    # Validate track file
+    if not os.path.exists(track_file):
+        print(f"Warning: Track file {track_file} not found, checking alternative paths...")
+        # Try with tracks/ prefix
+        alt_path = os.path.join("tracks", track_file)
+        if os.path.exists(alt_path):
+            track_file = alt_path
+            print(f"Using track file: {track_file}")
+        else:
+            # Try with .json extension
+            alt_path = os.path.join("tracks", f"{track_file}.json")
+            if os.path.exists(alt_path):
+                track_file = alt_path
+                print(f"Using track file: {track_file}")
+            else:
+                print("Could not find track file, using default: tracks/default.json")
+                track_file = "tracks/default.json"
+    
+    print(f"Using track file: {track_file}")
+    print(f"Behavior: {BEHAVIOR}")
+    print(f"Training frames: {FRAMES}")
+    
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
+    
     randomPolicyFE = [
-        7.74363107,
-        4.83296402,
-        6.1289194,
-        0.39292849,
-        2.0488831,
-        0.65611318,
-        6.90207523,
-        2.46475348,
+        3.90000000e-01,
+        1.50000000e-01,
+        3.80000000e-01,
+        2.00000000e-01,
+        2.50000000e-01,
+        3.00000000e-01,
+        3.50000000e-01,
+        4.00000000e-01,
+        2.00000000e-01,
+        1.00000000e-01
     ]
-    # ^the random policy feature expectations
-    expertPolicyYellowFE = [
-        7.5366e00,
-        4.6350e00,
-        7.4421e00,
-        3.1817e-01,
-        8.3398e00,
-        1.3710e-08,
-        1.3419e00,
-        0.0000e00,
-    ]
-    # ^feature expectations for the "follow Yellow obstacles" behavior
-    expertPolicyRedFE = [
-        7.9100e00,
-        5.3745e-01,
-        5.2363e00,
-        2.8652e00,
-        3.3120e00,
-        3.6478e-06,
-        3.82276074e00,
-        1.0219e-17,
-    ]
-    # ^feature expectations for the follow Red obstacles behavior
-    expertPolicyBrownFE = [
-        5.2210e00,
-        5.6980e00,
-        7.7984e00,
-        4.8440e-01,
-        2.0885e-04,
-        9.2215e00,
-        2.9386e-01,
-        4.8498e-17,
-    ]
-    # ^feature expectations for the "follow Brown obstacles" behavior
-    expertPolicyBumpingFE = [
-        7.5313e00,
-        8.2716e00,
-        8.0021e00,
-        2.5849e-03,
-        2.4300e01,
-        9.5962e01,
-        1.5814e01,
-        1.5538e03,
-    ]
-    # ^feature expectations for the "nasty bumping" behavior
+    
     expertPolicyCustom = [
-        7.80420871e+00,
-        4.12331575e+00,
-        7.74931451e+00,
-        3.01770286e-01,
-        9.65927729e+00,
-        1.10452189e-05,
-        3.89413763e-02,
-        5.07528786e-04
-    ]
-
+    8.15450743e-01,
+    3.81642258e-01,
+    7.21806767e-01,
+    1.42339084e-02,
+    9.81664173e-01,
+    2.56301855e-21,
+    2.83499139e-03,
+    1.26692678e-03,
+    2.00000000e-01,
+    4.65498113e-55
+]
+    
     epsilon = 0.1
     irlearner = irlAgent(
-        randomPolicyFE, expertPolicyCustom, epsilon, NUM_STATES, FRAMES, BEHAVIOR
+        randomPolicyFE, 
+        expertPolicyCustom, 
+        epsilon, 
+        NUM_STATES, 
+        FRAMES, 
+        BEHAVIOR,
+        track_file  # Pass track_file to irlAgent
     )
+    
     print(irlearner.optimalWeightFinder())
