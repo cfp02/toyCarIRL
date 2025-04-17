@@ -3,15 +3,8 @@
 import logging
 
 import numpy as np
-import scipy
-from cvxopt import matrix, solvers
 
-from flat_game import carmunk
-from learning import IRL_sorter
-from nn import neural_net  # construct the nn and send to playing
-from playing import (
-    play,  # get the RL Test agent, gives out feature expectations after 2000 frames
-)
+from learning import IRL_sorter  # type: ignore
 
 if __name__ == "__main__":
     logger = logging.getLogger()
@@ -143,7 +136,7 @@ if __name__ == "__main__":
         -0.58976889,
     ]
     print("weights norm :: ", np.linalg.norm(w9_))
-    w9_ = w9_ / np.linalg.norm(w9_)
+    w9_ = np.array(w9_) / np.linalg.norm(w9_)
     print("weights norm new:: ", np.linalg.norm(w9_))
     print("weights after normalization:: ", w9_)
     IRL_sorter(w9_, i)

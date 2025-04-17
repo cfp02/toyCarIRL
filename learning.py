@@ -102,7 +102,7 @@ def train_net(model, params, weights, path, trainFrames, i):
 
             # Time it.
             tot_time = timeit.default_timer() - start_time
-            fps = car_distance / tot_time
+            fps = car_distance / tot_time  # noqa: F841
 
             # Reset.
             car_distance = 0

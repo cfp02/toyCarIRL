@@ -2,13 +2,11 @@
 import logging
 
 import numpy as np
-import scipy
 from cvxopt import (
     matrix,
     solvers,  # convex optimization library
 )
 
-from flat_game import carmunk  # get the environment
 from learning import IRL_helper  # get the Reinforcement learner
 from nn import neural_net  # construct the nn and send to playing
 from playing import (
