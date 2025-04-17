@@ -5,44 +5,53 @@ Use the arrow keys to move the agent around
 Left arrow key: turn Left
 right arrow key: turn right
 up arrow key: dont turn, move forward
-down arrow key: exit 
+down arrow key: exit
 
 Also, always exit using down arrow key rather than Ctrl+C or your terminal will be tken over by curses
 """
-from flat_game import carmunk
+
+import argparse
+import os
+
 import numpy as np
-from nn import neural_net
 import pygame
 
-NUM_STATES = 8
-GAMMA = 0.9 # the discount factor for RL algorithm
+from flat_game import carmunk
 
-def play():
+NUM_STATES = 8
+GAMMA = 0.9  # the discount factor for RL algorithm
+
+
+def play(obstacle_file=None):
     car_distance = 0
     weights = [1, 1, 1, 1, 1, 1, 1, 1]  # just some random weights
-    game_state = carmunk.GameState(weights)
+    game_state = (
+        carmunk.GameState(weights)
+        if obstacle_file is None
+        else carmunk.GameState(weights, obstacle_file)
+    )
     _, state, __ = game_state.frame_step((2))
     featureExpectations = np.zeros(len(weights))
     Prev = np.zeros(len(weights))
-    
+
     # Create a clock to control frame rate
     clock = pygame.time.Clock()
-    FPS = 30  # Target frames per second
-    
+    FPS = 15  # Target frames per second
+
     running = True
     action = 2  # Default action is forward
     last_action = 2
-    
+
     print("Starting manual control...")
     print("Use arrow keys to control the car:")
     print("LEFT: Turn left")
     print("RIGHT: Turn right")
     print("DOWN: Exit")
     print("The car moves forward by default")
-    
+
     while running:
         car_distance += 1
-        
+
         # Handle pygame events
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -59,7 +68,7 @@ def play():
                 # When key is released, go back to forward motion
                 if event.key in [pygame.K_LEFT, pygame.K_RIGHT]:
                     action = 2
-        
+
         # Only take action if it's different from last action
         if action != last_action:
             # Take action
@@ -68,14 +77,24 @@ def play():
         else:
             # Keep moving in the same direction
             immediateReward, state, readings = game_state.frame_step(action)
-        
+
         if car_distance > 100:
-            featureExpectations += (GAMMA**(car_distance-101))*np.array(readings)
-        
+            featureExpectations += (GAMMA ** (car_distance - 101)) * np.array(readings)
+
         # Only print updates every 100 steps
         if car_distance % 100 == 0:
-            changePercentage = (np.linalg.norm(featureExpectations - Prev)*100.0)/np.linalg.norm(featureExpectations)
-            print(f"\rDistance: {car_distance}, Change: {changePercentage:.2f}%", end="")
+            norm_fe = np.linalg.norm(featureExpectations)
+            if norm_fe > 0:
+                changePercentage = (
+                    np.linalg.norm(featureExpectations - Prev) * 100.0
+                ) / norm_fe
+            else:
+                changePercentage = (
+                    0.0  # If norm is zero, there's no meaningful percentage
+                )
+            print(
+                f"\rDistance: {car_distance}, Change: {changePercentage:.2f}%", end=""
+            )
             Prev = np.array(featureExpectations)
 
         # Control frame rate
@@ -87,6 +106,42 @@ def play():
     print("\nFinal feature expectations:", featureExpectations)
     return featureExpectations
 
+
 if __name__ == "__main__":
-    result = play()
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(
+        description="Manually control the car and record feature expectations."
+    )
+    parser.add_argument(
+        "--track",
+        "-t",
+        type=str,
+        default=None,
+        help="Path to obstacle configuration file (default: tracks/default.json)",
+    )
+    args = parser.parse_args()
+
+    # Resolve path if provided
+    obstacle_file = None
+    if args.track:
+        # Try different path combinations
+        potential_paths = [
+            args.track,  # Direct path
+            os.path.join("tracks", args.track),  # In tracks folder
+            os.path.join(
+                "tracks", f"{args.track}.json"
+            ),  # In tracks folder with .json extension
+        ]
+
+        for path in potential_paths:
+            if os.path.exists(path):
+                obstacle_file = path
+                break
+
+        if not obstacle_file:
+            print(f"Warning: Could not find track file at {args.track}")
+            print(f"Tried: {potential_paths}")
+            print("Using default track instead.")
+
+    result = play(obstacle_file)
     print("Final feature expectations:", result)

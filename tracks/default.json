@@ -1,0 +1,23 @@
+{
+    "name": "Default Track",
+    "walls": [
+      {"xy1": [100, 100], "xy2": [100, 585], "radius": 7, "color": "yellow"},
+      {"xy1": [450, 600], "xy2": [100, 600], "radius": 7, "color": "yellow"},
+      {"xy1": [900, 100], "xy2": [900, 585], "radius": 7, "color": "yellow"},
+      {"xy1": [900, 600], "xy2": [550, 600], "radius": 7, "color": "yellow"},
+      {"xy1": [200, 100], "xy2": [200, 480], "radius": 7, "color": "yellow"},
+      {"xy1": [450, 500], "xy2": [200, 500], "radius": 7, "color": "yellow"},
+      {"xy1": [800, 100], "xy2": [800, 480], "radius": 7, "color": "yellow"},
+      {"xy1": [800, 500], "xy2": [550, 500], "radius": 7, "color": "yellow"},
+      {"xy1": [300, 100], "xy2": [300, 350], "radius": 7, "color": "yellow"},
+      {"xy1": [700, 380], "xy2": [300, 380], "radius": 7, "color": "yellow"},
+      {"xy1": [700, 100], "xy2": [700, 350], "radius": 7, "color": "yellow"},
+      {"xy1": [400, 100], "xy2": [600, 100], "radius": 7, "color": "brown"},
+      {"xy1": [400, 200], "xy2": [600, 200], "radius": 7, "color": "brown"},
+      {"xy1": [400, 300], "xy2": [600, 300], "radius": 7, "color": "brown"},
+      {"xy1": [700, 370], "xy2": [300, 370], "radius": 7, "color": "brown"},
+      {"xy1": [310, 100], "xy2": [310, 350], "radius": 7, "color": "brown"},
+      {"xy1": [690, 100], "xy2": [690, 350], "radius": 7, "color": "brown"}
+    ],
+    "car_start": {"x": 150, "y": 20, "r": 15, "angle": 1.4}
+  }

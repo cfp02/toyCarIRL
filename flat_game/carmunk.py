@@ -1,13 +1,14 @@
-import random
+import json
 import math
+import os
+import random
+
 import numpy as np
-
 import pygame
-from pygame.color import THECOLORS
-
 import pymunk
-from pymunk.vec2d import Vec2d
+from pygame.color import THECOLORS
 from pymunk.pygame_util import DrawOptions
+from pymunk.vec2d import Vec2d
 
 # PyGame init
 width = 1000
@@ -29,76 +30,78 @@ draw_screen = flag
 
 
 class GameState:
-    def __init__(self, weights):
+    def __init__(self, weights, obstacle_file="tracks/default.json"):
         # Global-ish.
         self.crashed = False
 
         # Physics stuff.
         self.space = pymunk.Space()
-        self.space.gravity = pymunk.Vec2d(0., 0.)
-        self.W = weights #weights for the reward function
-
-        # Create the car.
-        self.create_car(150, 20, 15)
+        self.space.gravity = pymunk.Vec2d(0.0, 0.0)
+        self.W = weights  # weights for the reward function
 
         # Record steps.
         self.num_steps = 0
         self.num_obstacles_type = 4
 
-        # Create walls.
+        self.load_environment(obstacle_file)
+
+    def load_environment(self, obstacle_file="tracks/default.json"):
+        """Load obstacles and car position from a file if provided, otherwise use defaults."""
+        self.obstacles = []
+
+        if obstacle_file and os.path.exists(obstacle_file):
+            try:
+                with open(obstacle_file, "r") as f:
+                    config = json.load(f)
+
+                # Load car configuration
+                car_config = config.get(
+                    "car_start", {"x": 150, "y": 20, "r": 15, "angle": 1.4}
+                )
+                self.create_car(car_config["x"], car_config["y"], car_config["r"])
+                self.car_body.angle = car_config.get("angle", 1.4)
+
+                # Load walls
+                self.create_boundary_walls()
+
+                # Load obstacles
+                for wall in config.get("walls", []):
+                    self.obstacles.append(
+                        self.create_obstacle(
+                            wall["xy1"],
+                            wall["xy2"],
+                            wall.get("radius", 7),
+                            wall.get("color", "yellow"),
+                        )
+                    )
+
+                print(f"Loaded environment from {obstacle_file}")
+
+            except Exception as e:
+                print(f"Error loading obstacle file: {e}")
+
+    def create_boundary_walls(self):
+        """Create the boundary walls of the environment."""
         static = [
+            pymunk.Segment(self.space.static_body, (0, 1), (0, height), 1),
+            pymunk.Segment(self.space.static_body, (1, height), (width, height), 1),
             pymunk.Segment(
-                self.space.static_body,
-                (0, 1), (0, height), 1),
-            pymunk.Segment(
-                self.space.static_body,
-                (1, height), (width, height), 1),
-            pymunk.Segment(
-                self.space.static_body,
-                (width-1, height), (width-1, 1), 1),
-            pymunk.Segment(
-                self.space.static_body,
-                (1, 1), (width, 1), 1)
+                self.space.static_body, (width - 1, height), (width - 1, 1), 1
+            ),
+            pymunk.Segment(self.space.static_body, (1, 1), (width, 1), 1),
         ]
         for s in static:
-            s.friction = 1.
+            s.friction = 1.0
             s.group = 1
             s.collision_type = 1
-            s.color = THECOLORS['red']
+            s.color = THECOLORS["red"]
             self.space.add(s)
-
-        # Create obstacles
-        self.obstacles = []
-        self.obstacles.append(self.create_obstacle([100, 100], [100, 585], 7, "yellow"))
-        self.obstacles.append(self.create_obstacle([450, 600], [100, 600], 7, "yellow"))
-        self.obstacles.append(self.create_obstacle([900, 100], [900, 585], 7, "yellow"))
-        self.obstacles.append(self.create_obstacle([900, 600], [550, 600], 7, "yellow"))
-
-        self.obstacles.append(self.create_obstacle([200, 100], [200, 480], 7, "yellow"))
-        self.obstacles.append(self.create_obstacle([450, 500], [200, 500], 7, "yellow"))
-        self.obstacles.append(self.create_obstacle([800, 100], [800, 480], 7, "yellow"))
-        self.obstacles.append(self.create_obstacle([800, 500], [550, 500], 7, "yellow"))
-
-        self.obstacles.append(self.create_obstacle([300, 100], [300, 350], 7, "yellow"))
-        self.obstacles.append(self.create_obstacle([700, 380], [300, 380], 7, "yellow"))
-        self.obstacles.append(self.create_obstacle([700, 100], [700, 350], 7, "yellow"))
-
-        self.obstacles.append(self.create_obstacle([400, 100], [600, 100], 7, "brown"))
-        self.obstacles.append(self.create_obstacle([400, 200], [600, 200], 7, "brown"))
-        self.obstacles.append(self.create_obstacle([400, 300], [600, 300], 7, "brown"))
-
-        self.obstacles.append(self.create_obstacle([700, 370], [300, 370], 7, "brown"))
-        self.obstacles.append(self.create_obstacle([310, 100], [310, 350], 7, "brown"))
-        self.obstacles.append(self.create_obstacle([690, 100], [690, 350], 7, "brown"))
-
-        # Create a cat.
-        #self.create_cat()
 
     def create_obstacle(self, xy1, xy2, r, color):
         # Create static body for obstacles
         c_body = pymunk.Body(body_type=pymunk.Body.STATIC)
         c_shape = pymunk.Segment(c_body, xy1, xy2, r)
-        c_shape.friction = 1.
+        c_shape.friction = 1.0
         c_shape.group = 1
         c_shape.collision_type = 1
         c_shape.color = THECOLORS[color]
@@ -113,7 +116,6 @@ class GameState:
         self.cat_shape.color = THECOLORS["orange"]
         self.cat_shape.elasticity = 1.0
         self.cat_shape.angle = 0.5
-        direction = Vec2d(1, 0).rotated(self.cat_body.angle)
         self.space.add(self.cat_body, self.cat_shape)
 
     def create_car(self, x, y, r):
@@ -130,9 +132,9 @@ class GameState:
 
     def frame_step(self, action):
         if action == 0:  # Turn left.
-            self.car_body.angle -= .3
+            self.car_body.angle -= 0.3
         elif action == 1:  # Turn right.
-            self.car_body.angle += .3
+            self.car_body.angle += 0.3
 
         # Move obstacles - commented out to keep them static
         # if self.num_steps % 100 == 0:
@@ -148,7 +150,7 @@ class GameState:
         # Update the screen and stuff.
         screen.fill(THECOLORS["black"])
         self.space.debug_draw(draw_options)
-        self.space.step(1./10)
+        self.space.step(1.0 / 10)
         if draw_screen:
             pygame.display.flip()
         clock.tick()
@@ -165,7 +167,7 @@ class GameState:
             self.recover_from_crash(driving_direction)
         else:
             readings.append(0)
-            
+
         reward = np.dot(self.W, readings)
         state = np.array([readings])
 
@@ -198,10 +200,10 @@ class GameState:
             self.car_body.velocity = -100 * driving_direction
             self.crashed = False
             for i in range(10):
-                self.car_body.angle += .2  # Turn a little.
+                self.car_body.angle += 0.2  # Turn a little.
                 screen.fill(THECOLORS["black"])
                 self.space.debug_draw(draw_options)
-                self.space.step(1./10)
+                self.space.step(1.0 / 10)
                 if draw_screen:
                     pygame.display.flip()
                 clock.tick()
@@ -227,7 +229,7 @@ class GameState:
         arm_left = self.make_sonar_arm(x, y)
         arm_middle = arm_left
         arm_right = arm_left
-        
+
         obstacleType = []
         obstacleType.append(self.get_arm_distance(arm_left, x, y, angle, 0.75)[1])
         obstacleType.append(self.get_arm_distance(arm_middle, x, y, angle, 0)[1])
@@ -244,20 +246,25 @@ class GameState:
                 ObstacleNumber[2] += 1
             elif i == 3:
                 ObstacleNumber[3] += 1
-           
 
         # Rotate them and get readings.
-        readings.append(1.0 - float(self.get_arm_distance(arm_left, x, y, angle, 0.75)[0]/39.0)) # 39 = max distance
-        readings.append(1.0 - float(self.get_arm_distance(arm_middle, x, y, angle, 0)[0]/39.0))
-        readings.append(1.0 - float(self.get_arm_distance(arm_right, x, y, angle, -0.75)[0]/39.0))
-        readings.append(float(ObstacleNumber[0]/3.0))
-        readings.append(float(ObstacleNumber[1]/3.0))
-        readings.append(float(ObstacleNumber[2]/3.0))
-        readings.append(float(ObstacleNumber[3]/3.0))
+        readings.append(
+            1.0 - float(self.get_arm_distance(arm_left, x, y, angle, 0.75)[0] / 39.0)
+        )  # 39 = max distance
+        readings.append(
+            1.0 - float(self.get_arm_distance(arm_middle, x, y, angle, 0)[0] / 39.0)
+        )
+        readings.append(
+            1.0 - float(self.get_arm_distance(arm_right, x, y, angle, -0.75)[0] / 39.0)
+        )
+        readings.append(float(ObstacleNumber[0] / 3.0))
+        readings.append(float(ObstacleNumber[1] / 3.0))
+        readings.append(float(ObstacleNumber[2] / 3.0))
+        readings.append(float(ObstacleNumber[3] / 3.0))
 
         if show_sensors:
             pygame.display.update()
-        
+
         return readings
 
     def get_arm_distance(self, arm, x, y, angle, offset):
@@ -269,26 +276,31 @@ class GameState:
             i += 1
 
             # Move the point to the right spot.
-            rotated_p = self.get_rotated_point(
-                x, y, point[0], point[1], angle + offset
-            )
+            rotated_p = self.get_rotated_point(x, y, point[0], point[1], angle + offset)
 
             # Check if we've hit something. Return the current i (distance)
             # if we did.
-            if rotated_p[0] <= 0 or rotated_p[1] <= 0 \
-                    or rotated_p[0] >= width or rotated_p[1] >= height:
+            if (
+                rotated_p[0] <= 0
+                or rotated_p[1] <= 0
+                or rotated_p[0] >= width
+                or rotated_p[1] >= height
+            ):
                 return [i, 3]  # Sensor is off the screen, return 3 for wall obstacle
             else:
                 obs = screen.get_at(rotated_p)
                 temp = self.get_track_or_not(obs)
                 if temp != 0:
-                    return [i, temp] #sensor hit a round obstacle, return the type of obstacle
+                    return [
+                        i,
+                        temp,
+                    ]  # sensor hit a round obstacle, return the type of obstacle
 
             if show_sensors:
                 pygame.draw.circle(screen, (255, 255, 255), (rotated_p), 2)
 
         # Return the distance for the arm.
-        return [i, 0] #sensor did not hit anything return 0 for black space
+        return [i, 0]  # sensor did not hit anything return 0 for black space
 
     def make_sonar_arm(self, x, y):
         spread = 8  # Default spread.
@@ -303,10 +315,8 @@ class GameState:
 
     def get_rotated_point(self, x_1, y_1, x_2, y_2, radians):
         # Rotate x_2, y_2 around x_1, y_1 by angle.
-        x_change = (x_2 - x_1) * math.cos(radians) + \
-            (y_2 - y_1) * math.sin(radians)
-        y_change = (y_1 - y_2) * math.cos(radians) - \
-            (x_1 - x_2) * math.sin(radians)
+        x_change = (x_2 - x_1) * math.cos(radians) + (y_2 - y_1) * math.sin(radians)
+        y_change = (y_1 - y_2) * math.cos(radians) - (x_1 - x_2) * math.sin(radians)
         new_x = x_change + x_1
         new_y = y_change + y_1
         return int(new_x), int(new_y)
@@ -317,17 +327,19 @@ class GameState:
     #     else:
     #         return 1
 
-    def get_track_or_not(self, reading): # basically differentiate b/w the objects the car views.
-        if reading == THECOLORS['yellow']:
+    def get_track_or_not(
+        self, reading
+    ):  # basically differentiate b/w the objects the car views.
+        if reading == THECOLORS["yellow"]:
             return 1  # Sensor is on a yellow obstacle
-        elif reading == THECOLORS['brown']:
+        elif reading == THECOLORS["brown"]:
             return 2  # Sensor is on brown obstacle
         else:
-            return 0 #for black
+            return 0  # for black
 
 
 if __name__ == "__main__":
     weights = [1, 1, 1, 1, 1, 1, 1, 1]
-    game_state = GameState()
+    game_state = GameState(weights)
     while True:
         game_state.frame_step((random.randint(0, 2)))
