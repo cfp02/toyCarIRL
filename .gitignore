@@ -3,5 +3,5 @@ __pycache__
 *.pyc
 .vscode
 logs
-checkpoints
-saved-models
+saved-models/checkpoints
+saved-models/custom_models

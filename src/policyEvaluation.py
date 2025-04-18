@@ -1,3 +1,4 @@
+# TODO: Refactor for pytorch implementation
 "To manually evaluate all the policies obtained after convergence of the IRL step"
 
 import logging

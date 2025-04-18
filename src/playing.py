@@ -40,8 +40,10 @@ def play(agent, weights, track_file="tracks/default.json"):
 
         # Tell us something and break after a certain distance
         if car_distance % 2000 == 0:
-                print(f"Current distance: {car_distance} frames. Collisions: {collision_count}")
-                break
+            print(
+                f"Current distance: {car_distance} frames. Collisions: {collision_count}"
+            )
+            break
 
     return featureExpectations
 
@@ -51,9 +53,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Run a trained model with a specific track"
     )
-    parser.add_argument("behavior", nargs="?", default="red", help="Behavior name")
-    parser.add_argument("iteration", nargs="?", default="3", help="Iteration number")
-    parser.add_argument("frame", nargs="?", default="100000", help="Frame number")
+    parser.add_argument(
+        "--model",
+        "-m",
+        type=str,
+        default="saved-models/checkpoints/best_model.pth",
+        help="Model path (default: saved-models/checkpoints/best_model.pth)",
+    )
     parser.add_argument(
         "--track",
         "-t",
@@ -61,19 +67,25 @@ if __name__ == "__main__":
         default="tracks/default.json",
         help="Path to obstacle configuration file (default: tracks/default.json)",
     )
+    parser.add_argument(
+        "--frames",
+        "-f",
+        type=int,
+        default=2000,
+        help="Number of frames to run (default: 2000)",
+    )
     args = parser.parse_args()
 
-    BEHAVIOR = args.behavior
-    ITERATION = args.iteration
-    FRAME = args.frame
+    if not os.path.exists(args.model):
+        print(f"Error: Model file not found at {args.model}")
+        exit(1)
 
     # Resolve the track file path if provided
-    track_file = "tracks/default.json"  # Set a default value
+    track_file = "tracks/default.json"
     if args.track:
-        # Try different path combinations
         potential_paths = [
-            args.track,  # Direct path
-            os.path.join("tracks", args.track),  # In tracks folder
+            args.track,
+            os.path.join("tracks", args.track),
             os.path.join(
                 "tracks", f"{args.track}.json"
             ),  # In tracks folder with .json extension
@@ -84,49 +96,43 @@ if __name__ == "__main__":
                 track_file = path
                 print(f"Using track file: {path}")
                 break
-        else:  # This else belongs to the for loop, runs if no break occurred
-            print(f"Warning: Could not find track file at {args.track}")
-            print(f"Tried: {potential_paths}")
-            print("Using default track instead.")
+            else:
+                print(f"Warning: Could not find track file at {args.track}")
+                print(f"Tried: {potential_paths}")
+                print("Using default track instead.")
 
     # Model path for the PyTorch model
-    saved_model = (
-        "saved-models/"
-        + "saved-models_"
-        + BEHAVIOR
-        + "/evaluatedPolicies/"
-        + str(ITERATION)
-        + "-164-150-100-50000-"
-        + str(FRAME)
-        + ".pt"  # Changed from .h5 to .pt for PyTorch
-    )
+    print(f"Loading model from: {args.model}")
 
+    # change this to change reward function, this should match whatever model you load. TODO: make arg
     weights = [
-        -0.79380502,
-        0.00704546,
-        0.50866139,
-        0.29466834,
-        -0.07636144,
-        0.09153848,
-        -0.02632325,
-        -0.09672041,
+        3.96957075e-01,
+        1.60768375e-01,
+        3.85956376e-01,
+        2.17107187e-01,
+        5.31013934e-01,
+        1.89519667e-01,
+        0.00000000e00,
+        6.23592131e-02,
+        5.14246354e-01,
+        3.43368382e-02,
     ]
 
-    # Initialize the DQNAgent
     agent = DQNAgent(
         state_size=NUM_STATES,
-        action_size=3,  # Assuming 3 actions: left, right, no-op
+        action_size=3,
         hidden_sizes=[164, 150],
-        use_prioritized_replay=False,  # Not needed for inference
     )
 
     # Load the model
-    if not agent.load(saved_model):
-        print(f"Failed to load model from {saved_model}")
+    if not agent.load(args.model):
+        print(f"Failed to load model from {args.model}")
         exit(1)
 
     # Set to evaluation mode
     agent.policy_net.eval()
 
     # Run the agent and get feature expectations
-    print(play(agent, weights, track_file))
+    feature_expectations = play(agent, weights, track_file)
+    print("Feature expectations:")
+    print(feature_expectations)

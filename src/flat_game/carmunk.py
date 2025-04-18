@@ -49,7 +49,7 @@ class GameState:
         # Set up collision handler
         self.collision_handler = self.space.add_collision_handler(1, 2)
         self.collision_handler.begin = self.handle_collision
-        
+
         self.load_environment(obstacle_file)
 
     def handle_collision(self, arbiter, space, data):
@@ -146,16 +146,18 @@ class GameState:
         self.car_body.position = x, y
         self.car_shape = pymunk.Circle(self.car_body, r)
         self.car_shape.color = THECOLORS["green"]
-        self.car_shape.elasticity = 1.0  # Increased bounce for better collision response
+        self.car_shape.elasticity = (
+            1.0  # Increased bounce for better collision response
+        )
         self.car_body.angle = 1.4
-        
+
         # Set collision type for car
         self.car_shape.collision_type = 2
-        
+
         # Initial impulse
         driving_direction = Vec2d(1, 0).rotated(self.car_body.angle)
         self.car_body.apply_impulse_at_local_point(driving_direction)
-        
+
         self.space.add(self.car_body, self.car_shape)
 
     def frame_step(self, action):
@@ -169,7 +171,7 @@ class GameState:
 
         # Get driving direction and apply velocity
         driving_direction = Vec2d(1, 0).rotated(self.car_body.angle)
-        
+
         # Set velocity without overriding physics response from collisions
         if not self.crashed:
             self.car_body.velocity = 100 * driving_direction
@@ -181,7 +183,7 @@ class GameState:
         # Update the screen
         screen.fill(THECOLORS["black"])
         self.space.debug_draw(draw_options)
-        
+
         if draw_screen:
             pygame.display.flip()
         clock.tick()
@@ -204,16 +206,16 @@ class GameState:
 
         # Calculate base reward from features
         base_reward = np.dot(self.W, readings)
-        
+
         # Add collision penalty to reward
         collision_penalty = 0
         if self.crashed and not self.was_crashed_last_frame:
             # Only apply penalty on new crashes
             collision_penalty = -10.0  # Significant penalty for each collision
-        
+
         # Store crash state for next frame
         self.was_crashed_last_frame = self.crashed
-        
+
         # Combined reward
         reward = base_reward + collision_penalty
         state = np.array([readings])
@@ -222,12 +224,12 @@ class GameState:
 
         # Return collision count along with other information
         return reward, state, readings, self.collision_count
-    
+
     def check_bounds(self):
         """Check if car has gone out of bounds and correct if needed"""
         x, y = self.car_body.position
         r = self.car_shape.radius
-        
+
         # Apply corrections if out of bounds
         if x < r:
             self.car_body.position = (r, y)
@@ -237,7 +239,7 @@ class GameState:
             self.car_body.position = (width - r, y)
             self.car_body.velocity = Vec2d(0, self.car_body.velocity.y)
             self.crashed = True
-            
+
         if y < r:
             self.car_body.position = (x, r)
             self.car_body.velocity = Vec2d(self.car_body.velocity.x, 0)
@@ -310,14 +312,14 @@ class GameState:
         readings.append(float(ObstacleNumber[1] / 3.0))  # Yellow obstacles
         readings.append(float(ObstacleNumber[2] / 3.0))  # Brown obstacles
         readings.append(float(ObstacleNumber[3] / 3.0))  # Out of bounds
-        
+
         # Always include red boundary walls as a standard feature
         readings.append(float(ObstacleNumber[4] / 3.0))  # Red boundary walls
-        
+
         # Add normalized collision count as a feature
         # Normalize by dividing by a reasonable maximum (e.g., 10)
-        readings.append(min(1.0, self.collision_count / 10.0))  
-        
+        readings.append(min(1.0, self.collision_count / 10.0))
+
         if show_sensors:
             pygame.display.update()
 
@@ -391,8 +393,7 @@ class GameState:
 
 if __name__ == "__main__":
     # Can work with either weights format
-    weights = [1, 1, 1, 1, 1, 1, 1, 1]  # Original 8-element weights
-    # weights = [1, 1, 1, 1, 1, 1, 1, 1, 1]  # New 9-element weights with red boundary
+    weights = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
     game_state = GameState(weights)
     while True:
         game_state.frame_step((random.randint(0, 2)))

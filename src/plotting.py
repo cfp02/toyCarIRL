@@ -1,3 +1,4 @@
+# TODO: Refactor for pytorch implementation
 """
 Take the data in the results folder and plot it so we can stop using stupid
 Excel.

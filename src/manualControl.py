@@ -2,9 +2,7 @@
 Manually control the agent to provide expert trajectories for IRL/RL.
 
 This script allows a human expert to control the car in the environment
-to generate demonstration trajectories. These can then be used for:
-- Inverse Reinforcement Learning (IRL): Learning the reward function
-- Reinforcement Learning (RL): Imitation learning from demonstrations
+to generate demonstration trajectories for IRL and RL
 
 Controls:
 - LEFT ARROW: Turn left
@@ -26,14 +24,12 @@ import numpy as np
 import pygame
 from tqdm import tqdm
 
-# Import the environment
 from flat_game import carmunk
 
-# Configuration
 NUM_STATES = 10
-GAMMA = 0.9  # Discount factor for RL algorithm
-DEFAULT_FPS = 10 
-MAX_EPISODE_LENGTH = 5000  # Maximum steps per episode
+GAMMA = 0.9  # Discount factor
+DEFAULT_FPS = 10
+MAX_EPISODE_LENGTH = 5000
 DATA_DIR = Path("demonstrations")
 
 
@@ -66,7 +62,12 @@ class TrajectoryRecorder:
         self.current_collision_count = 0
 
     def record_step(
-        self, state: np.ndarray, action: int, reward: float, features: List[float], collision_count: int
+        self,
+        state: np.ndarray,
+        action: int,
+        reward: float,
+        features: List[float],
+        collision_count: int,
     ) -> None:
         """
         Record a single step in the trajectory.
@@ -83,16 +84,16 @@ class TrajectoryRecorder:
         self.rewards.append(reward)
         self.features.append(features.copy())
         self.collisions.append(collision_count)
-        
-        # Detect new collisions
+
+        # Detect collisions
         if collision_count > self.current_collision_count:
             print(f"Collision #{collision_count} at step {self.step_count}")
             self.current_collision_count = collision_count
-            
+
         self.step_count += 1
 
-        # Update feature expectations (discounted sum of features)
-        if self.step_count > 100:  # Same as original code
+        # Update feature expectations
+        if self.step_count > 100:
             self.feature_expectations += (
                 self.gamma ** (self.step_count - 101)
             ) * np.array(features)
@@ -138,11 +139,7 @@ class TrajectoryRecorder:
                 "timestamp": time.strftime("%Y%m%d_%H%M%S"),
             },
         }
-
-        # Ensure directory exists
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
-
-        # Save the trajectory
         with open(filepath, "w") as f:
             json.dump(trajectory_data, f, indent=2)
 
@@ -165,26 +162,20 @@ def play_and_record(
     Returns:
         Trajectory data dictionary
     """
-    # Initialize weights (these could be loaded from a file in a more advanced setup)
+    # Initialize weights to all 1.0
     weights = [1.0] * NUM_STATES
-
-    # Initialize game
     game_state = (
         carmunk.GameState(weights)
         if obstacle_file is None
         else carmunk.GameState(weights, obstacle_file)
     )
 
-    # Initialize recorder
     recorder = TrajectoryRecorder(weights)
+    reward, state, features, collision_count = game_state.frame_step(
+        2
+    )  # Start with forward motion
 
-    # Take initial step to get the first state - FIX: Unpack 4 values instead of 3
-    reward, state, features, collision_count = game_state.frame_step(2)  # Start with forward motion
-
-    # Initialize pygame and clock
     clock = pygame.time.Clock()
-
-    # Set up progress bar
     progress = tqdm(
         total=MAX_EPISODE_LENGTH,
         desc="Recording trajectory",
@@ -224,10 +215,10 @@ def play_and_record(
                     # When key is released, go back to forward motion
                     if event.key in [pygame.K_LEFT, pygame.K_RIGHT]:
                         action = 2
-            
-            # Take action in environment - FIX: Unpack 4 values instead of 3 
+
+            # Take action in environment - FIX: Unpack 4 values instead of 3
             reward, new_state, features, collision_count = game_state.frame_step(action)
-            
+
             # Record step
             recorder.record_step(state, action, reward, features, collision_count)
             state = new_state
@@ -236,10 +227,12 @@ def play_and_record(
             if recorder.step_count % 10 == 0:
                 progress.n = recorder.step_count
                 progress.update(0)
-                progress.set_postfix({
-                    "change": f"{recorder.get_change_percentage():.2f}%",
-                    "collisions": collision_count
-                })
+                progress.set_postfix(
+                    {
+                        "change": f"{recorder.get_change_percentage():.2f}%",
+                        "collisions": collision_count,
+                    }
+                )
 
             # Calculate and display feature expectation changes periodically
             if recorder.step_count % 100 == 0:
@@ -252,18 +245,16 @@ def play_and_record(
         progress.close()
 
         # Calculate feature expectations
-        # Normalize by demonstration length if needed
         if recorder.step_count > 100:
-            # Normalize feature expectations to be comparable with other demonstrations
-            # This makes them length-independent
-            recorded_steps = recorder.step_count - 100  # Effective steps used for FE            
-            # Normalize by dividing by (1-gamma)/(1-gamma^steps)
-            norm_factor = (1 - GAMMA) / (1 - GAMMA ** recorded_steps) if recorded_steps > 0 else 1
+            # Normalize FE to be length-independent
+            recorded_steps = recorder.step_count - 100
+            norm_factor = (
+                (1 - GAMMA) / (1 - GAMMA**recorded_steps) if recorded_steps > 0 else 1
+            )
             feature_expectations = recorder.feature_expectations * norm_factor
         else:
             feature_expectations = np.zeros(recorder.feature_dim)
-        
-        # Print the feature expectations in a format that's easy to copy into your IRL code
+
         print("\n=== Feature Expectations for IRL ===")
         print("[")
         for i, fe in enumerate(feature_expectations):
@@ -272,9 +263,7 @@ def play_and_record(
         print("]")
         print("====================================")
 
-        # Generate default output filename if not provided
         if output_file is None:
-            # Create data directory if it doesn't exist
             DATA_DIR.mkdir(exist_ok=True)
             track_name = (
                 os.path.splitext(os.path.basename(obstacle_file))[0]
@@ -289,7 +278,8 @@ def play_and_record(
 
         print(f"\nRecorded {recorder.step_count} steps")
         print(f"Total collisions: {recorder.current_collision_count}")
-        
+
+
 if __name__ == "__main__":
     # Parse command line arguments
     parser = argparse.ArgumentParser(

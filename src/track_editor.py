@@ -5,13 +5,11 @@ import os
 import pygame
 from pygame.color import THECOLORS
 
-# Initialize Pygame
 pygame.init()
 width, height = 1000, 700
 screen = pygame.display.set_mode((width, height))
 pygame.display.set_caption("Track Editor")
 
-# Colors and settings
 COLORS = {
     "yellow": THECOLORS["yellow"],
     "brown": THECOLORS["brown"],

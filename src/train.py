@@ -7,7 +7,6 @@ import numpy as np
 from torch.utils.tensorboard.writer import SummaryWriter
 from tqdm import tqdm
 
-# Import your car environment
 from flat_game import carmunk
 from nn import DQNAgent
 
@@ -20,7 +19,7 @@ def train(
     max_steps_per_episode: int,
     log_interval: int = 10,
     save_interval: int = 100,
-    checkpoint_dir: str = "checkpoints",
+    checkpoint_dir: str = "saved-models/checkpoints",
     log_dir: str = "logs",
     resume: bool = False,
 ):
@@ -48,7 +47,6 @@ def train(
     # Track best performance
     best_reward = float("-inf")
 
-    # Create environment with specified track file
     print(f"Training with track file: {env_path}")
     env = carmunk.GameState(env_weights, env_path)
 
@@ -56,9 +54,9 @@ def train(
 
     for episode in progress_bar:
         # Reset environment
-        action = 2  # Do nothing to initialize
+        action = 2
         _, state, _, _ = env.frame_step(action)
-        state = state.reshape(-1)  # Flatten
+        state = state.reshape(-1)
 
         episode_reward = 0
         episode_loss = 0
@@ -66,10 +64,10 @@ def train(
         done = False
 
         while not done and steps < max_steps_per_episode:
-            # Select and perform an action
+            # Select action
             action = agent.act(state)
             reward, next_state, _, _ = env.frame_step(action)
-            next_state = next_state.reshape(-1)  # Flatten
+            next_state = next_state.reshape(-1)
 
             # Check if done (crashed)
             done = bool(next_state[-1])  # Last element indicates crash
@@ -175,14 +173,14 @@ def evaluate(
 
     for episode in range(num_episodes):
         # Reset environment
-        action = 2  # Do nothing to initialize
+        action = 2
         _, state, _, collisions = env.frame_step(action)
-        state = state.reshape(-1)  # Flatten
+        state = state.reshape(-1)
 
         episode_reward = 0
         steps = 0
 
-        while collisions <= 5: # allow some collisons to learn recovery behavior
+        while collisions <= 5:  # allow some collisons to learn recovery behavior
             # Select action without exploration
             action = agent.act(state, evaluate=True)
             reward, next_state, _, next_collisions = env.frame_step(action)
@@ -278,10 +276,10 @@ if __name__ == "__main__":
         2.17107187e-01,
         5.31013934e-01,
         1.89519667e-01,
-        0.00000000e+00,
+        0.00000000e00,
         6.23592131e-02,
         5.14246354e-01,
-        3.43368382e-02
+        3.43368382e-02,
     ]
 
     # Number of inputs (from the environment)
@@ -297,15 +295,15 @@ if __name__ == "__main__":
         buffer_size=args.buffer_size,
         batch_size=args.batch_size,
         target_update_freq=args.target_update,
-        use_prioritized_replay=not args.no_prioritized,
-        use_double_dqn=not args.no_double,
         reward_scaling=args.reward_scaling,
     )
 
     # Verify that the environment file exists
     env_path = args.env_path
     if not os.path.exists(env_path):
-        print(f"Warning: Track file {env_path} not found, checking alternative paths...")
+        print(
+            f"Warning: Track file {env_path} not found, checking alternative paths..."
+        )
         # Try with tracks/ prefix
         alt_path = os.path.join("tracks", env_path)
         if os.path.exists(alt_path):
@@ -313,14 +311,14 @@ if __name__ == "__main__":
             print(f"Found track at: {env_path}")
         else:
             # Try with .json extension
-            alt_path = os.path.join("tracks", f"{env_path}.json") 
+            alt_path = os.path.join("tracks", f"{env_path}.json")
             if os.path.exists(alt_path):
                 env_path = alt_path
                 print(f"Found track at: {env_path}")
             else:
                 print("⚠️ Could not find track file, using default: tracks/default.json")
                 env_path = "tracks/default.json"
-    
+
     print(f"🚗 Using track file: {os.path.abspath(env_path)}")
 
     if args.mode == "train":
