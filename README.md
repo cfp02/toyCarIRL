@@ -1,9 +1,3 @@
-**RBE 577 TODOs**
-* Get training loop working, probably by modernizing it heavily
-* Modify game enviornment for our IRL Puposes
-	* Probably want to have a distance from goal, time from start, start and end locations and we can train for solving mazes / path finding type stuff
-* I think we could implement this in Pytorch relativly easily all be it with a lot of refactoring and it might work a lot better / would be more relavent to the class
-
 **Reinforcement learning (RL)** is is the very basic and most intuitive form of trial and error learning, it is the way by which most of the living organisms with some form of thinking capabilities learn. Often referred to as learning by exploration, it is the way by which a new born human baby learns to take its first steps, that is by taking random actions initially and then slowly figuring out the actions which lead to the forward walking motion. 
 
 > Note, this post assumes a good understanding of the Reinforcement learning framework, please make yourself familiar with RL through week 5 and 6 of this awesome online course [AI_Berkeley](https://www.edx.org/course/artificial-intelligence-uc-berkeleyx-cs188-1x).

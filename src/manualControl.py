@@ -87,7 +87,7 @@ class TrajectoryRecorder:
 
         # Detect collisions
         if collision_count > self.current_collision_count:
-            print(f"Collision #{collision_count} at step {self.step_count}")
+            # print(f"Collision #{collision_count} at step {self.step_count}")
             self.current_collision_count = collision_count
 
         self.step_count += 1

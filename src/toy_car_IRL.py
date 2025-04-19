@@ -14,8 +14,6 @@ from playing import (
 from train import train as IRL_helper
 
 NUM_STATES = 10
-BEHAVIOR = "custom"  # yellow/brown/red/bumping
-FRAMES = 100000  # number of RL training frames per iteration of IRL
 
 
 class irlAgent:
@@ -40,6 +38,10 @@ class irlAgent:
             np.asarray(self.expertPolicy) - np.asarray(self.randomPolicy)
         )  # norm of the diff in expert and random
         self.policiesFE = {self.randomT: self.randomPolicy}
+
+        self.best_model_path = None
+        self.best_t_value = float("inf")
+
         print("Expert - Random at the Start (t) :: ", self.randomT)
         self.currentT = self.randomT
         self.minimumT = self.randomT
@@ -63,13 +65,19 @@ class irlAgent:
             hidden_sizes=[164, 150],
         )
 
+        if self.best_model_path and os.path.exists(self.best_model_path):
+            print(f"Loading previous best model: {self.best_model_path}")
+            agent.load(self.best_model_path)
+            # Initialize with a higher epsilon
+            agent.epsilon = 0.3
+
         # Train the agent
         IRL_helper(
             agent=agent,
             env_weights=W,
             env_path=self.track_file,
             num_episodes=self.num_frames // 100,
-            max_steps_per_episode=1000,
+            max_steps_per_episode=250,
             checkpoint_dir=checkpoint_dir,
             log_dir=f"{save_dir}/logs_{i}",
         )
@@ -91,6 +99,21 @@ class irlAgent:
             np.dot(W, np.asarray(self.expertPolicy) - np.asarray(tempFE))
         )  # hyperdistance = t
         self.policiesFE[hyperDistance] = tempFE
+
+        # Update best model path if this policy is better
+        if hyperDistance < self.best_t_value:
+            track_name = os.path.splitext(os.path.basename(self.track_file))[0]
+            save_dir = os.path.join(
+                "saved-models", f"{self.behavior}_models", "evaluatedPolicies"
+            )
+            self.best_model_path = os.path.join(
+                save_dir, f"iter{i}_track-{track_name}_frame-{self.num_frames}.pt"
+            )
+            self.best_t_value = hyperDistance
+            print(
+                f"New best model: {self.best_model_path} with distance: {hyperDistance}"
+            )
+
         return hyperDistance
 
     def optimalWeightFinder(self):
@@ -116,7 +139,7 @@ class irlAgent:
         self,
     ):
         m = len(self.expertPolicy)
-        P = matrix(2.0 * np.eye(m), tc="d")  # min ||w||
+        P = matrix(2.0 * np.eye(m), tc="d")
         q = matrix(np.zeros(m), tc="d")
         policyList = [self.expertPolicy]
         h_list = [1]
@@ -160,6 +183,12 @@ if __name__ == "__main__":
         type=int,
         default=100000,
         help="Number of frames for training (default: 100000)",
+    )
+    parser.add_argument(
+        "--continue",
+        dest="continue_training",
+        action="store_true",
+        help="Continue from previous training run",
     )
     args = parser.parse_args()
 
@@ -207,19 +236,37 @@ if __name__ == "__main__":
 
     # Change this based on demonstration FE
     expertPolicy = [
-        8.15450743e-01,
-        3.81642258e-01,
-        7.21806767e-01,
-        1.42339084e-02,
-        9.81664173e-01,
-        2.56301855e-21,
-        2.83499139e-03,
-        1.26692678e-03,
-        2.00000000e-01,
-        4.65498113e-55,
+        1.72849219e-01,
+        7.87486915e-01,
+        8.62962472e-01,
+        2.39732714e-01,
+        7.60214094e-01,
+        9.68773805e-08,
+        2.64416711e-05,
+        2.66536551e-05,
+        1.00000000e00,
+        8.52654902e-01,
     ]
 
     epsilon = 0.1
+
+    best_model_path = None
+    if args.continue_training:
+        # Try to load convergence data
+        try:
+            import json
+
+            with open(f"convergence-{BEHAVIOR}.json", "r") as f:
+                convergence_data = json.load(f)
+                if convergence_data:
+                    best_model = convergence_data[-1].get("best_model")
+                    if best_model and os.path.exists(best_model):
+                        best_model_path = best_model
+                        print(f"Continuing training from model: {best_model_path}")
+        except Exception as e:
+            print(f"Error loading previous convergence data: {e}")
+            print("Starting fresh training run.")
+
     irlearner = irlAgent(
         randomPolicyFE,
         expertPolicy,
@@ -230,4 +277,8 @@ if __name__ == "__main__":
         track_file,
     )
 
+    if best_model_path:
+        irlearner.best_model_path = best_model_path
+
+    final_weights = irlearner.optimalWeightFinder()
     print(irlearner.optimalWeightFinder())

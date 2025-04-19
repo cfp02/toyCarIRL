@@ -51,6 +51,11 @@ def train(
     env = carmunk.GameState(env_weights, env_path)
 
     progress_bar = tqdm(range(start_episode, num_episodes), desc="Training")
+    from collections import deque
+
+    # Conditons for early stopping
+    early_stop_window = 30
+    recent_rewards = deque(maxlen=early_stop_window)
 
     for episode in progress_bar:
         # Reset environment
@@ -61,18 +66,46 @@ def train(
         episode_reward = 0
         episode_loss = 0
         steps = 0
-        done = False
 
-        while not done and steps < max_steps_per_episode:
+        recent_rewards.append(episode_reward)
+        if len(recent_rewards) == early_stop_window:
+            # Calculate mean and standard deviation of recent rewards
+            mean_reward = np.mean(recent_rewards)
+            std_reward = np.std(recent_rewards)
+
+            # Check if the standard deviation is small enough (rewards are stable)
+            converged = (
+                std_reward <= 0.1 * abs(mean_reward)
+                if mean_reward != 0
+                else std_reward <= 1.0
+            )
+
+            # Log the convergence progress
+            if (episode + 1) % log_interval == 0:
+                print(
+                    f"Convergence check: mean={mean_reward:.2f}, std={std_reward:.2f}, "
+                    f"{'stable' if converged else 'not stable yet'}"
+                )
+
+            # Check if we've met our convergence criteria
+            if converged:
+                print(
+                    f"\n✅ Early stopping: Agent has converged with stable rewards "
+                    f"(mean={mean_reward:.2f}, std={std_reward:.2f})"
+                )
+                agent.save(os.path.join(checkpoint_dir, "converged_model.pth"))
+                break
+
+        while steps < max_steps_per_episode:
             # Select action
             action = agent.act(state)
             reward, next_state, _, _ = env.frame_step(action)
             next_state = next_state.reshape(-1)
 
-            # Check if done (crashed)
-            done = bool(next_state[-1])  # Last element indicates crash
-
             # Store transition in memory
+            # Check if we're near the end of the episode
+            done = (max_steps_per_episode - steps) <= 2
+
             agent.memorize(state, action, reward, next_state, done)
 
             # Move to the next state
@@ -338,7 +371,7 @@ if __name__ == "__main__":
 
     elif args.mode == "eval":
         # Load model for evaluation
-        model_path = args.model_path or "checkpoints/best_model.pth"
+        model_path = args.model_path or "saved-models/checkpoints/best_model.pth"
         if not agent.load(model_path):
             print("Cannot evaluate without a trained model.")
             exit(1)

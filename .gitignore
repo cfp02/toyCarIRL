@@ -5,3 +5,4 @@ __pycache__
 logs
 saved-models/checkpoints
 saved-models/custom_models
+saved-models/wall_models
