@@ -1,7 +1,7 @@
 import argparse
 import json
 import os
-from typing import List
+from typing import List, Tuple
 
 import numpy as np
 from torch.utils.tensorboard.writer import SummaryWriter
@@ -22,7 +22,9 @@ def train(
     checkpoint_dir: str = "saved-models/checkpoints",
     log_dir: str = "logs",
     resume: bool = False,
-):
+    tracker=None,
+    iteration=None,
+) -> Tuple[List[float], List[float]]:
     # Create directories
     os.makedirs(checkpoint_dir, exist_ok=True)
     os.makedirs(log_dir, exist_ok=True)
@@ -43,6 +45,7 @@ def train(
     total_frames = 0
     all_rewards = []
     all_lengths = []
+    all_losses = []  # Track losses
 
     # Track best performance
     best_reward = float("-inf")
@@ -54,8 +57,13 @@ def train(
     from collections import deque
 
     # Conditons for early stopping
-    early_stop_window = 30
+    early_stop_window = 40
     recent_rewards = deque(maxlen=early_stop_window)
+
+    # Define a frequency for updating the tracker during training
+    training_update_interval = max(
+        1, num_episodes // 20
+    )  # Update ~20 times during training
 
     for episode in progress_bar:
         # Reset environment
@@ -66,35 +74,6 @@ def train(
         episode_reward = 0
         episode_loss = 0
         steps = 0
-
-        recent_rewards.append(episode_reward)
-        if len(recent_rewards) == early_stop_window:
-            # Calculate mean and standard deviation of recent rewards
-            mean_reward = np.mean(recent_rewards)
-            std_reward = np.std(recent_rewards)
-
-            # Check if the standard deviation is small enough (rewards are stable)
-            converged = (
-                std_reward <= 0.1 * abs(mean_reward)
-                if mean_reward != 0
-                else std_reward <= 1.0
-            )
-
-            # Log the convergence progress
-            if (episode + 1) % log_interval == 0:
-                print(
-                    f"Convergence check: mean={mean_reward:.2f}, std={std_reward:.2f}, "
-                    f"{'stable' if converged else 'not stable yet'}"
-                )
-
-            # Check if we've met our convergence criteria
-            if converged:
-                print(
-                    f"\n✅ Early stopping: Agent has converged with stable rewards "
-                    f"(mean={mean_reward:.2f}, std={std_reward:.2f})"
-                )
-                agent.save(os.path.join(checkpoint_dir, "converged_model.pth"))
-                break
 
         while steps < max_steps_per_episode:
             # Select action
@@ -123,9 +102,45 @@ def train(
             steps += 1
             total_frames += 1
 
-        # Track rewards
+        recent_rewards.append(episode_reward)
+
+        # Only check early stopping when we have enough data
+        if len(recent_rewards) == early_stop_window:
+            # Calculate statistics
+            mean_reward = np.mean(recent_rewards)
+            std_reward = np.std(recent_rewards)
+
+            # Focus on stability - reward should be relatively the same for the window
+            reward_stable = (
+                std_reward <= (0.1 * abs(mean_reward))
+                if mean_reward != 0
+                else std_reward <= 1.0
+            )
+
+            # Determine if we should stop - only based on stability
+            converged = reward_stable and mean_reward > 40
+
+            # Log convergence info periodically
+            if (episode + 1) % log_interval == 0:
+                print(
+                    f"Convergence: mean={mean_reward:.1f}, std={std_reward:.1f}, "
+                    f"stability_ratio={std_reward / abs(mean_reward):.3f} (target ≤ 0.1), converged={converged}"
+                )
+
+            # Early stop if converged
+            if converged:
+                print(
+                    f"\n✅ Early stopping: Agent converged with stable rewards "
+                    f"(mean={mean_reward:.1f}, std={std_reward:.1f})"
+                )
+            agent.save(os.path.join(checkpoint_dir, "converged_model.pth"))
+            break
+
+        # Track rewards and losses
         all_rewards.append(episode_reward)
         all_lengths.append(steps)
+        avg_loss = episode_loss / steps if steps > 0 else 0
+        all_losses.append(avg_loss)  # Store average loss for the episode
 
         # Update progress bar
         progress_bar.set_postfix(
@@ -141,10 +156,33 @@ def train(
 
         # Logging
         writer.add_scalar("Train/Reward", episode_reward, episode)
-        writer.add_scalar("Train/Length", steps, episode)
-        writer.add_scalar("Train/Epsilon", agent.epsilon, episode)
         if steps > 0:
-            writer.add_scalar("Train/AvgLoss", episode_loss / steps, episode)
+            writer.add_scalar("Train/AvgLoss", avg_loss, episode)
+
+        # Update tracker during training (real-time updates)
+        if tracker and (episode + 1) % training_update_interval == 0:
+            # Calculate current metrics
+            avg_reward_window = (
+                np.mean(all_rewards[-100:])
+                if len(all_rewards) >= 100
+                else np.mean(all_rewards)
+            )
+            avg_loss_window = (
+                np.mean(all_losses[-100:])
+                if len(all_losses) >= 100
+                else np.mean(all_losses)
+            )
+
+            # Add training progress data point
+            tracker.add_training_progress(
+                iteration=iteration,  # Current IRL iteration
+                episode=episode,  # Current training episode
+                avg_reward=avg_reward_window,
+                avg_loss=avg_loss_window,
+            )
+
+            # Generate updated plots
+            tracker.plot_training_progress()
 
         # Log to console
         if (episode + 1) % log_interval == 0:
@@ -187,7 +225,7 @@ def train(
     writer.close()
 
     print("Training complete!")
-    return all_rewards, all_lengths
+    return all_rewards, all_losses  # Return both rewards and losses
 
 
 def evaluate(
@@ -321,7 +359,7 @@ if __name__ == "__main__":
     # Create agent
     agent = DQNAgent(
         state_size=NUM_INPUT,
-        action_size=3,  # Left, Right, No-op
+        action_size=3,
         hidden_sizes=args.hidden_sizes,
         learning_rate=args.lr,
         gamma=args.gamma,

@@ -1,5 +1,6 @@
 import argparse
 import logging
+import os
 
 import numpy as np
 from cvxopt import (
@@ -12,6 +13,7 @@ from playing import (
     play,
 )
 from train import train as IRL_helper
+from metrics import IRLTracker
 
 NUM_STATES = 10
 
@@ -42,6 +44,9 @@ class irlAgent:
         self.best_model_path = None
         self.best_t_value = float("inf")
 
+        # Initialize tracker
+        self.tracker = IRLTracker(behavior, track_file, num_frames)
+
         print("Expert - Random at the Start (t) :: ", self.randomT)
         self.currentT = self.randomT
         self.minimumT = self.randomT
@@ -71,8 +76,8 @@ class irlAgent:
             # Initialize with a higher epsilon
             agent.epsilon = 0.3
 
-        # Train the agent
-        IRL_helper(
+        # Train the agent with the tracker passed in for real-time updates
+        rewards, losses = IRL_helper(
             agent=agent,
             env_weights=W,
             env_path=self.track_file,
@@ -80,6 +85,8 @@ class irlAgent:
             max_steps_per_episode=250,
             checkpoint_dir=checkpoint_dir,
             log_dir=f"{save_dir}/logs_{i}",
+            tracker=self.tracker,  # Pass the tracker object
+            iteration=i,  # Pass the current iteration number
         )
 
         # Save the final model
@@ -89,10 +96,18 @@ class irlAgent:
         agent.save(saved_model)
 
         # Use the trained agent to get feature expectations with the same track
-        return play(agent, W, self.track_file)
+        fe = play(agent, W, self.track_file)
+
+        # Calculate average metrics from training
+        avg_reward = (
+            np.mean(rewards[-100:]) if len(rewards) >= 100 else np.mean(rewards)
+        )
+        avg_loss = np.mean(losses) if losses else 0
+
+        return fe, avg_reward, avg_loss
 
     def policyListUpdater(self, W, i):
-        tempFE = self.getRLAgentFE(
+        tempFE, avg_reward, avg_loss = self.getRLAgentFE(
             W, i
         )  # get feature expectations of a new policy respective to the input weights
         hyperDistance = np.abs(
@@ -114,10 +129,24 @@ class irlAgent:
                 f"New best model: {self.best_model_path} with distance: {hyperDistance}"
             )
 
+        # Track iteration data
+        self.tracker.add_iteration_data(
+            iteration=i,
+            t_value=hyperDistance,
+            weights=W,
+            fe_distances=[float(k) for k in self.policiesFE.keys()],
+            best_model_path=self.best_model_path,
+            avg_reward=float(avg_reward),
+            avg_loss=float(avg_loss),
+        )
+
+        # Generate plots after each iteration
+        self.tracker.plot_metrics()
+
         return hyperDistance
 
     def optimalWeightFinder(self):
-        f = open("weights-" + BEHAVIOR + ".txt", "w")
+        f = open("weights-" + self.behavior + ".txt", "w")
         i = 1
         while True:
             W = self.optimization()
@@ -133,6 +162,10 @@ class irlAgent:
                 break
             i += 1
         f.close()
+
+        # Generate final summary report
+        self.tracker.generate_summary_report()
+
         return W
 
     def optimization(
@@ -281,4 +314,4 @@ if __name__ == "__main__":
         irlearner.best_model_path = best_model_path
 
     final_weights = irlearner.optimalWeightFinder()
-    print(irlearner.optimalWeightFinder())
+    print("Final optimized weights:", final_weights)
