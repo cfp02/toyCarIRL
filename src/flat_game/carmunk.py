@@ -87,21 +87,30 @@ class GameState:
         self.num_steps = 0
         
         # Generate random positions
-        # Keep objects within bounds (100 to 700 for both x and y)
-        car_x = random.randint(100, 700)
-        car_y = random.randint(100, 700)
-        block_x = random.randint(100, 700)
-        block_y = random.randint(100, 700)
+        # Keep objects within bounds (200 to 600 for both x and y)
+        # This keeps them farther from the walls (which are at 0 and 1000 for x, 0 and 700 for y)
+        car_x = random.randint(200, 600)
+        car_y = random.randint(200, 500)
+        block_x = random.randint(200, 600)
+        block_y = random.randint(200, 500)
+        goal_x = random.randint(200, 600)
+        goal_y = random.randint(200, 500)
         
         # Ensure car and block are not too close to each other
         while abs(car_x - block_x) < 100 and abs(car_y - block_y) < 100:
-            block_x = random.randint(100, 700)
-            block_y = random.randint(100, 700)
+            block_x = random.randint(200, 600)
+            block_y = random.randint(200, 500)
+        
+        # Ensure goal is not too close to car or block
+        while (abs(goal_x - car_x) < 100 and abs(goal_y - car_y) < 100) or \
+              (abs(goal_x - block_x) < 100 and abs(goal_y - block_y) < 100):
+            goal_x = random.randint(200, 600)
+            goal_y = random.randint(200, 500)
         
         # Recreate environment with new positions
-        self.load_environment(self.obstacle_file, car_pos=(car_x, car_y), block_pos=(block_x, block_y))
+        self.load_environment(self.obstacle_file, car_pos=(car_x, car_y), block_pos=(block_x, block_y), goal_pos=(goal_x, goal_y))
 
-    def load_environment(self, obstacle_file, car_pos=None, block_pos=None):
+    def load_environment(self, obstacle_file, car_pos=None, block_pos=None, goal_pos=None):
         """Load environment from file with optional positions"""
         # Get the project root directory (one level up from src)
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
@@ -171,9 +180,13 @@ class GameState:
         # Create goal zone if specified
         if 'goal_zone' in config:
             goal = config['goal_zone']
+            if goal_pos:
+                x, y = goal_pos
+            else:
+                x, y = goal['x'], goal['y']
             self.create_goal_zone(
-                goal['x'],
-                goal['y'],
+                x,
+                y,
                 goal['width'],
                 goal['height']
             )
@@ -275,19 +288,26 @@ class GameState:
 
     def create_pushable_object(self, x, y, width, height, mass=2.0):
         """Create a pushable object in the environment"""
-        # Double the size
-        width *= 2
-        height *= 2
+        # Use width as the radius for the dodecagon
+        radius = width * 2  # Double the size as before
+        
+        # Create dodecagon vertices
+        vertices = []
+        for i in range(12):
+            angle = (i / 12.0) * 2 * math.pi
+            px = radius * math.cos(angle)
+            py = radius * math.sin(angle)
+            vertices.append((px, py))
         
         # Create body with damping
-        moment = pymunk.moment_for_box(mass, (width, height))
+        moment = pymunk.moment_for_poly(mass, vertices, (0, 0))  # Use the actual vertices for moment calculation
         body = pymunk.Body(mass, moment)
         body.position = x, y
         body.angle = 0
         body.damping = 0.8  # Add damping to make the object slow down over time
         
-        # Create shape with increased friction
-        shape = pymunk.Poly.create_box(body, (width, height))
+        # Create shape
+        shape = pymunk.Poly(body, vertices)
         shape.friction = 0.0  # Remove friction
         shape.elasticity = 0.1  # Reduced elasticity
         shape.collision_type = 3  # Set collision type for pushable object
@@ -303,8 +323,10 @@ class GameState:
         self.goal_body = pymunk.Body(body_type=pymunk.Body.STATIC)
         self.goal_body.position = x, y
 
-        # Create the shape
-        self.goal_shape = pymunk.Poly.create_box(self.goal_body, (width, height))
+        # Create the shape as a circle
+        # Use width as diameter to maintain similar size
+        radius = width / 2
+        self.goal_shape = pymunk.Circle(self.goal_body, radius)
         self.goal_shape.friction = 0.0
         self.goal_shape.elasticity = 0.0
         self.goal_shape.color = THECOLORS["green"]
