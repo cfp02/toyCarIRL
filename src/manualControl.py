@@ -35,20 +35,29 @@ MAX_EPISODE_LENGTH = 5000
 DATA_DIR = Path("demonstrations")
 
 
+def get_demo_dir(task_name: str) -> Path:
+    """Get the directory path for a specific task's demonstrations."""
+    demo_dir = DATA_DIR / task_name
+    demo_dir.mkdir(parents=True, exist_ok=True)
+    return demo_dir
+
+
 class TrajectoryRecorder:
     """Records and manages expert demonstration trajectories."""
 
-    def __init__(self, weights: List[float], gamma: float = GAMMA):
+    def __init__(self, weights: List[float], task_name: str, gamma: float = GAMMA):
         """
         Initialize the trajectory recorder.
 
         Args:
             weights: The feature weights (used for dimensionality)
+            task_name: Name of the task (e.g., "pushing")
             gamma: Discount factor
         """
         self.weights = weights
         self.feature_dim = len(weights)
         self.gamma = gamma
+        self.task_name = task_name
         self.reset()
 
     def reset(self) -> None:
@@ -128,6 +137,12 @@ class TrajectoryRecorder:
         Args:
             filepath: Path to save the trajectory data
         """
+        # Generate timestamp-based filename if no specific filepath is provided
+        if filepath is None:
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            demo_dir = get_demo_dir(self.task_name)
+            filepath = str(demo_dir / f"demo_{timestamp}.json")
+
         trajectory_data = {
             "states": [
                 s.tolist() if isinstance(s, np.ndarray) else s for s in self.states
@@ -143,6 +158,7 @@ class TrajectoryRecorder:
                 "is_in_goal": self.is_in_goal,
                 "gamma": self.gamma,
                 "timestamp": time.strftime("%Y%m%d_%H%M%S"),
+                "task": self.task_name,
             },
         }
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
@@ -153,36 +169,37 @@ class TrajectoryRecorder:
 
 
 def play_and_record(
-    obstacle_file: Optional[str] = None,
+    track_file: Optional[str] = None,
     output_file: Optional[str] = None,
     fps: int = DEFAULT_FPS,
     num_demos: int = 5,
+    task_name: str = "pushing",
 ) -> None:
     """
     Play the game with manual control and record expert trajectory.
 
     Args:
-        obstacle_file: Path to obstacle configuration file
+        track_file: Path to track configuration file
         output_file: Path to save the trajectory data
         fps: Frames per second for game display
         num_demos: Number of demonstrations to collect
-
-    Returns:
-        Trajectory data dictionary
+        task_name: Name of the task (e.g., "pushing")
     """
     # Initialize weights to all 1.0
     weights = [1.0] * NUM_STATES
     game_state = (
         carmunk.GameState(weights)
-        if obstacle_file is None
-        else carmunk.GameState(weights, obstacle_file)
+        if track_file is None
+        else carmunk.GameState(weights, track_file)
     )
 
     demonstrations = []
     demo_count = 0
+    demo_dir = get_demo_dir(task_name)
 
     # Print instructions
     print("\n--- Manual Control for Expert Demonstrations ---")
+    print(f"Task: {task_name}")
     print("Use arrow keys to control the car:")
     print("  LEFT: Turn left")
     print("  RIGHT: Turn right")
@@ -191,10 +208,11 @@ def play_and_record(
     print("  R: Reset current demonstration")
     print("  Q: Quit collection")
     print(f"Recording at {fps} FPS. Max episode length: {MAX_EPISODE_LENGTH} steps.")
-    print(f"Collecting {num_demos} demonstrations.\n")
+    print(f"Collecting {num_demos} demonstrations.")
+    print(f"Demonstrations will be saved to: {demo_dir}\n")
 
     while demo_count < num_demos:
-        recorder = TrajectoryRecorder(weights)
+        recorder = TrajectoryRecorder(weights, task_name)
         reward, state, features, collision_count = game_state.frame_step(2)  # Start with forward motion
 
         clock = pygame.time.Clock()
@@ -255,36 +273,24 @@ def play_and_record(
                         }
                     )
 
-                # Calculate and display feature expectation changes periodically
-                if recorder.step_count % 100 == 0:
-                    recorder.get_change_percentage()
-                    recorder.update_prev_expectations()
-
                 # Check if demonstration is complete
                 if game_state.is_in_goal:
                     print(f"✅ Demonstration {demo_count + 1} completed successfully!")
+                    # Save the trajectory immediately
+                    timestamp = time.strftime("%Y%m%d_%H%M%S")
+                    filename = str(demo_dir / f"demo_{timestamp}.json")
+                    recorder.save_trajectory(filename)
                     demonstrations.append(recorder)
                     demo_count += 1
+                    # Reset environment for next demonstration
+                    game_state = carmunk.GameState(weights, track_file)
                     running = False
+                    break
 
                 # Control frame rate
                 clock.tick(fps)
         finally:
             progress.close()
-
-            # Save the trajectory if it was completed
-            if game_state.is_in_goal:
-                if output_file:
-                    recorder.save_trajectory(output_file)
-                else:
-                    # Generate filename with timestamp
-                    timestamp = time.strftime("%Y%m%d_%H%M%S")
-                    track_name = os.path.splitext(os.path.basename(obstacle_file))[0]
-                    filename = f"demonstrations/trajectory_{track_name}_{timestamp}.json"
-                    recorder.save_trajectory(filename)
-
-            # Reset environment for next demonstration
-            game_state = carmunk.GameState(weights, obstacle_file)
 
     return demonstrations
 
@@ -295,7 +301,7 @@ def main():
         "--track",
         type=str,
         default="tracks/pushing.json",
-        help="Track file to use (default: tracks/pushing.json)",
+        help="Track configuration file (default: tracks/pushing.json)",
     )
     parser.add_argument(
         "--output",
@@ -314,19 +320,27 @@ def main():
         default=5,
         help="Number of demonstrations to collect (default: 5)",
     )
+    parser.add_argument(
+        "--task",
+        type=str,
+        default="pushing",
+        help="Name of the task (default: pushing)",
+    )
     args = parser.parse_args()
 
     # Collect demonstrations
     print(f"Collecting {args.num_demos} demonstrations using track: {args.track}")
     demonstrations = play_and_record(
-        obstacle_file=args.track,
+        track_file=args.track,
         output_file=args.output,
         fps=args.fps,
         num_demos=args.num_demos,
+        task_name=args.task,
     )
 
     if demonstrations:
         print(f"\nSuccessfully collected {len(demonstrations)} demonstrations!")
+        print(f"Demonstrations saved in: {get_demo_dir(args.task)}")
 
 
 if __name__ == "__main__":

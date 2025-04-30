@@ -110,7 +110,7 @@ class GameState:
         while abs(car_x - block_x) < 100 and abs(car_y - block_y) < 100:
             block_x = random.randint(200, 600)
             block_y = random.randint(200, 500)
-        
+            
         # Ensure goal is not too close to car or block
         while (abs(goal_x - car_x) < 100 and abs(goal_y - car_y) < 100) or \
               (abs(goal_x - block_x) < 100 and abs(goal_y - block_y) < 100):
@@ -231,14 +231,11 @@ class GameState:
         # Get the shapes involved in the collision
         shape1, shape2 = arbiter.shapes
         
-        # Debug print
-        print(f"Goal collision detected! Shape1 type: {shape1.collision_type}, Shape2 type: {shape2.collision_type}")
-        
         # Check if one of the shapes is the pushable object (type 3) and the other is the goal (type 4)
         if (shape1.collision_type == 3 and shape2.collision_type == 4) or \
            (shape1.collision_type == 4 and shape2.collision_type == 3):
-            print("Pushable object entered goal zone!")
             self.is_in_goal = True
+            print("Pushable object entered goal zone!")
             return True
         return False
 
@@ -392,18 +389,15 @@ class GameState:
             reward_text = self.font.render(f'Current Reward: {self.current_reward:.2f}', True, THECOLORS["white"])
             total_text = self.font.render(f'Total Reward: {self.total_reward:.2f}', True, THECOLORS["white"])
             episodes_text = self.font.render(f'Episodes: {len(self.episode_rewards)}', True, THECOLORS["white"])
+            goal_text = self.font.render(f'Goal: {"Reached" if self.is_in_goal else "Not Reached"}', True, THECOLORS["white"])
             
             # Position text on the right side of the screen
             screen.blit(reward_text, (width - 300, 20))
             screen.blit(total_text, (width - 300, 50))
             screen.blit(episodes_text, (width - 300, 80))
+            screen.blit(goal_text, (width - 300, 110))
             
-            # Draw episode rewards history
-            for i, ep_reward in enumerate(self.episode_rewards[-5:]):  # Show last 5 episodes
-                ep_text = self.font.render(f'Episode {len(self.episode_rewards)-i}: {ep_reward:.2f}', True, THECOLORS["white"])
-                screen.blit(ep_text, (width - 300, 110 + i*30))
-            
-            pygame.display.flip()  # Update display
+            pygame.display.flip()
         
         # Get state and reward
         state = self.get_state()
@@ -417,6 +411,7 @@ class GameState:
             self.reset()
             return reward, state, features, self.collision_count
         
+        # Return state and reward
         return reward, state, features, self.collision_count
 
     def check_bounds(self):
