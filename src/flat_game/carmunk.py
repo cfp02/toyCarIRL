@@ -70,6 +70,16 @@ class GameState:
         # Initialize environment
         self.load_environment(obstacle_file)
 
+        # Add reward tracking
+        self.current_reward = 0
+        self.total_reward = 0
+        self.episode_rewards = []
+        self.prev_dist_to_goal = None  # Initialize distance tracking
+        
+        # Initialize font for text display
+        pygame.font.init()
+        self.font = pygame.font.SysFont('Arial', 24)
+
     def reset(self):
         """Reset the environment with random positions"""
         # Clear the space
@@ -109,6 +119,13 @@ class GameState:
         
         # Recreate environment with new positions
         self.load_environment(self.obstacle_file, car_pos=(car_x, car_y), block_pos=(block_x, block_y), goal_pos=(goal_x, goal_y))
+
+        # Track episode reward
+        if self.current_reward != 0:
+            self.episode_rewards.append(self.current_reward)
+            self.total_reward += self.current_reward
+            self.current_reward = 0
+            self.prev_dist_to_goal = None  # Reset distance tracking
 
     def load_environment(self, obstacle_file, car_pos=None, block_pos=None, goal_pos=None):
         """Load environment from file with optional positions"""
@@ -370,11 +387,28 @@ class GameState:
         if draw_screen:
             screen.fill(THECOLORS["black"])  # Clear screen
             self.space.debug_draw(draw_options)  # Draw physics objects
+            
+            # Draw reward information
+            reward_text = self.font.render(f'Current Reward: {self.current_reward:.2f}', True, THECOLORS["white"])
+            total_text = self.font.render(f'Total Reward: {self.total_reward:.2f}', True, THECOLORS["white"])
+            episodes_text = self.font.render(f'Episodes: {len(self.episode_rewards)}', True, THECOLORS["white"])
+            
+            # Position text on the right side of the screen
+            screen.blit(reward_text, (width - 300, 20))
+            screen.blit(total_text, (width - 300, 50))
+            screen.blit(episodes_text, (width - 300, 80))
+            
+            # Draw episode rewards history
+            for i, ep_reward in enumerate(self.episode_rewards[-5:]):  # Show last 5 episodes
+                ep_text = self.font.render(f'Episode {len(self.episode_rewards)-i}: {ep_reward:.2f}', True, THECOLORS["white"])
+                screen.blit(ep_text, (width - 300, 110 + i*30))
+            
             pygame.display.flip()  # Update display
         
         # Get state and reward
         state = self.get_state()
         reward = self.calculate_reward()
+        self.current_reward += reward  # Track current episode reward
         features = self.get_features()
         
         # Check if goal is reached and reset if needed
@@ -610,31 +644,28 @@ class GameState:
         dist_to_obj = math.sqrt((car_pos.x - obj_pos.x)**2 + (car_pos.y - obj_pos.y)**2)
         dist_to_goal = math.sqrt((obj_pos.x - goal_pos.x)**2 + (obj_pos.y - goal_pos.y)**2)
         
-        # Get features
-        features = self.get_features()
-        
-        # Calculate reward components
+        # Initialize reward
         reward = 0.0
         
-        # Distance reduction reward
-        if hasattr(self, 'prev_dist_to_goal'):
+        # Distance reduction reward (scaled down)
+        if hasattr(self, 'prev_dist_to_goal') and self.prev_dist_to_goal is not None:
             dist_reduction = self.prev_dist_to_goal - dist_to_goal
-            reward += dist_reduction * 10.0  # Scale up distance reduction
+            reward += dist_reduction * 1.0  # Reduced from 10.0 to 1.0
         
-        # Contact maintenance reward
+        # Contact maintenance reward (reduced)
         if self.is_pushing:
-            reward += 0.1  # Small reward for maintaining contact
+            reward += 0.01  # Reduced from 0.1 to 0.01
         
-        # Goal reached bonus
+        # Goal reached bonus (kept at 100)
         if self.is_in_goal:
             reward += 100.0
         
-        # Collision penalty
+        # Collision penalty (increased)
         if self.collision_count > 0:
-            reward -= 5.0 * self.collision_count
+            reward -= 10.0 * self.collision_count  # Increased from 5.0 to 10.0
         
-        # Time penalty
-        reward -= 0.01  # Small penalty per step
+        # Time penalty (increased)
+        reward -= 0.1  # Increased from 0.01 to 0.1
         
         # Update previous distance
         self.prev_dist_to_goal = dist_to_goal
