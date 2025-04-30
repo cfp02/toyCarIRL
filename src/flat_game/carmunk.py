@@ -40,7 +40,7 @@ class GameState:
         # Physics stuff.
         self.space = pymunk.Space()
         self.space.gravity = pymunk.Vec2d(0.0, 0.0)
-        self.space.damping = 0.1  # Add damping to the entire space
+        self.space.damping = 0.07  # Add damping to the entire space
         self.W = weights  # weights for the reward function
 
         # Record steps.
@@ -64,10 +64,45 @@ class GameState:
         self.is_pushing = False
         self.is_in_goal = False
 
+        # Store track file for reset
+        self.obstacle_file = obstacle_file
+        
+        # Initialize environment
         self.load_environment(obstacle_file)
 
-    def load_environment(self, obstacle_file):
-        """Load the environment configuration from a track file"""
+    def reset(self):
+        """Reset the environment with random positions"""
+        # Clear the space
+        for body in self.space.bodies:
+            self.space.remove(body)
+        for shape in self.space.shapes:
+            self.space.remove(shape)
+            
+        # Reset state variables
+        self.crashed = False
+        self.collision_count = 0
+        self.was_crashed_last_frame = False
+        self.is_pushing = False
+        self.is_in_goal = False
+        self.num_steps = 0
+        
+        # Generate random positions
+        # Keep objects within bounds (100 to 700 for both x and y)
+        car_x = random.randint(100, 700)
+        car_y = random.randint(100, 700)
+        block_x = random.randint(100, 700)
+        block_y = random.randint(100, 700)
+        
+        # Ensure car and block are not too close to each other
+        while abs(car_x - block_x) < 100 and abs(car_y - block_y) < 100:
+            block_x = random.randint(100, 700)
+            block_y = random.randint(100, 700)
+        
+        # Recreate environment with new positions
+        self.load_environment(self.obstacle_file, car_pos=(car_x, car_y), block_pos=(block_x, block_y))
+
+    def load_environment(self, obstacle_file, car_pos=None, block_pos=None):
+        """Load environment from file with optional positions"""
         # Get the project root directory (one level up from src)
         project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
         
@@ -112,21 +147,26 @@ class GameState:
                 wall.get('color', 'red')
             )
 
-        # Create car
+        # Get car configuration
         car_start = config.get('car_start', {'x': 150, 'y': 350, 'r': 15, 'angle': 1.4})
-        self.create_car(car_start['x'], car_start['y'], car_start['r'])
+        
+        # Create car with optional position
+        if car_pos:
+            x, y = car_pos
+        else:
+            x, y = car_start['x'], car_start['y']
+        self.create_car(x, y, car_start['r'])
         self.car_body.angle = car_start.get('angle', 1.4)
 
-        # Create pushable object if specified
-        if 'pushable_object' in config:
-            obj = config['pushable_object']
-            self.create_pushable_object(
-                obj['x'],
-                obj['y'],
-                obj['width'],
-                obj['height'],
-                obj.get('mass', 2.0)
-            )
+        # Get pushable object configuration
+        obj = config.get('pushable_object', {'x': 400, 'y': 400, 'width': 30, 'height': 30, 'mass': 2.0})
+        
+        # Create pushable object with optional position
+        if block_pos:
+            x, y = block_pos
+        else:
+            x, y = obj['x'], obj['y']
+        self.create_pushable_object(x, y, obj['width'], obj['height'], obj.get('mass', 2.0))
 
         # Create goal zone if specified
         if 'goal_zone' in config:
@@ -161,8 +201,13 @@ class GameState:
         # Get the shapes involved in the collision
         shape1, shape2 = arbiter.shapes
         
-        # Check if one of the shapes is the pushable object
-        if (shape1.body == self.pushable_object or shape2.body == self.pushable_object):
+        # Debug print
+        print(f"Goal collision detected! Shape1 type: {shape1.collision_type}, Shape2 type: {shape2.collision_type}")
+        
+        # Check if one of the shapes is the pushable object (type 3) and the other is the goal (type 4)
+        if (shape1.collision_type == 3 and shape2.collision_type == 4) or \
+           (shape1.collision_type == 4 and shape2.collision_type == 3):
+            print("Pushable object entered goal zone!")
             self.is_in_goal = True
             return True
         return False
@@ -243,8 +288,9 @@ class GameState:
         
         # Create shape with increased friction
         shape = pymunk.Poly.create_box(body, (width, height))
-        shape.friction = 1.0  # Increased friction to maximum
+        shape.friction = 0.0  # Remove friction
         shape.elasticity = 0.1  # Reduced elasticity
+        shape.collision_type = 3  # Set collision type for pushable object
         
         # Add to space
         self.space.add(body, shape)
@@ -263,6 +309,7 @@ class GameState:
         self.goal_shape.elasticity = 0.0
         self.goal_shape.color = THECOLORS["green"]
         self.goal_shape.collision_type = 4  # Unique collision type for goal zone
+        self.goal_shape.sensor = True  # Make it a sensor so objects pass through
 
         # Add to space
         self.space.add(self.goal_body, self.goal_shape)
@@ -273,7 +320,6 @@ class GameState:
         return self.is_in_goal
 
     def frame_step(self, action):
-        """Update the game state based on the action"""
         # Reset goal state at start of each frame
         self.is_in_goal = False
         
@@ -292,8 +338,8 @@ class GameState:
             math.sin(self.car_body.angle) * 100
         )
         
-        # Step physics
-        self.space.step(1.0 / 60.0)
+        # Step the physics simulation
+        self.space.step(1.0/60.0)
         
         # Check bounds
         self.check_bounds()
@@ -304,14 +350,16 @@ class GameState:
             self.space.debug_draw(draw_options)  # Draw physics objects
             pygame.display.flip()  # Update display
         
-        # Get state
+        # Get state and reward
         state = self.get_state()
-        
-        # Calculate reward
         reward = self.calculate_reward()
-        
-        # Get features
         features = self.get_features()
+        
+        # Check if goal is reached and reset if needed
+        if self.is_in_goal:
+            print("Goal reached! Resetting environment...")
+            self.reset()
+            return reward, state, features, self.collision_count
         
         return reward, state, features, self.collision_count
 
