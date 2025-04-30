@@ -1,0 +1,48 @@
+{
+  "name": "pushing",
+  "walls": [
+    {
+      "xy1": [0, 0],
+      "xy2": [0, 700],
+      "radius": 7,
+      "color": "red"
+    },
+    {
+      "xy1": [0, 700],
+      "xy2": [1000, 700],
+      "radius": 7,
+      "color": "red"
+    },
+    {
+      "xy1": [1000, 700],
+      "xy2": [1000, 0],
+      "radius": 7,
+      "color": "red"
+    },
+    {
+      "xy1": [1000, 0],
+      "xy2": [0, 0],
+      "radius": 7,
+      "color": "red"
+    }
+  ],
+  "car_start": {
+    "x": 150,
+    "y": 350,
+    "r": 15,
+    "angle": 1.4
+  },
+  "pushable_object": {
+    "x": 200,
+    "y": 350,
+    "width": 60,
+    "height": 60,
+    "mass": 4.0
+  },
+  "goal_zone": {
+    "x": 800,
+    "y": 350,
+    "width": 50,
+    "height": 50
+  }
+} 

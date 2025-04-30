@@ -25,7 +25,7 @@ draw_options = DrawOptions(screen)
 
 # Showing sensors and redrawing slows things down.
 flag = 1
-show_sensors = flag
+show_sensors = 0  # Turn off sensor visualization
 draw_screen = flag
 
 
@@ -40,6 +40,7 @@ class GameState:
         # Physics stuff.
         self.space = pymunk.Space()
         self.space.gravity = pymunk.Vec2d(0.0, 0.0)
+        self.space.damping = 0.1  # Add damping to the entire space
         self.W = weights  # weights for the reward function
 
         # Record steps.
@@ -50,7 +51,92 @@ class GameState:
         self.collision_handler = self.space.add_collision_handler(1, 2)
         self.collision_handler.begin = self.handle_collision
 
+        # Add collision handler for car and pushable object
+        self.push_collision_handler = self.space.add_collision_handler(2, 3)
+        self.push_collision_handler.begin = self.handle_push_collision
+        self.push_collision_handler.separate = self.handle_push_separation
+
+        # Add collision handler for pushable object and goal
+        self.goal_collision_handler = self.space.add_collision_handler(3, 4)
+        self.goal_collision_handler.begin = self.handle_goal_collision
+
+        # Track contact state
+        self.is_pushing = False
+        self.is_in_goal = False
+
         self.load_environment(obstacle_file)
+
+    def load_environment(self, obstacle_file):
+        """Load the environment configuration from a track file"""
+        # Get the project root directory (one level up from src)
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+        
+        # Construct the full path to the track file
+        track_path = os.path.join(project_root, obstacle_file)
+        
+        try:
+            with open(track_path, 'r') as f:
+                config = json.load(f)
+                print(f"🚗 Using track file: {track_path}")
+        except FileNotFoundError:
+            print(f"Warning: Track file {track_path} not found, checking alternative paths...")
+            # Try alternative paths
+            alt_paths = [
+                os.path.join(project_root, 'tracks', os.path.basename(obstacle_file)),
+                os.path.join(project_root, obstacle_file),
+                obstacle_file
+            ]
+            for path in alt_paths:
+                try:
+                    with open(path, 'r') as f:
+                        config = json.load(f)
+                        print(f"🚗 Using track file: {path}")
+                        break
+                except FileNotFoundError:
+                    continue
+            else:
+                print("⚠️ Could not find track file, using default: tracks/default.json")
+                default_path = os.path.join(project_root, 'tracks', 'default.json')
+                with open(default_path, 'r') as f:
+                    config = json.load(f)
+
+        # Create boundary walls
+        self.create_boundary_walls()
+
+        # Create walls from config
+        for wall in config.get('walls', []):
+            self.create_obstacle(
+                wall['xy1'],
+                wall['xy2'],
+                wall.get('radius', 7),
+                wall.get('color', 'red')
+            )
+
+        # Create car
+        car_start = config.get('car_start', {'x': 150, 'y': 350, 'r': 15, 'angle': 1.4})
+        self.create_car(car_start['x'], car_start['y'], car_start['r'])
+        self.car_body.angle = car_start.get('angle', 1.4)
+
+        # Create pushable object if specified
+        if 'pushable_object' in config:
+            obj = config['pushable_object']
+            self.create_pushable_object(
+                obj['x'],
+                obj['y'],
+                obj['width'],
+                obj['height'],
+                obj.get('mass', 2.0)
+            )
+
+        # Create goal zone if specified
+        if 'goal_zone' in config:
+            goal = config['goal_zone']
+            self.create_goal_zone(
+                goal['x'],
+                goal['y'],
+                goal['width'],
+                goal['height']
+            )
 
     def handle_collision(self, arbiter, space, data):
         """Handle collision between car and obstacles"""
@@ -60,44 +146,26 @@ class GameState:
         # Allow the collision to occur and generate response force
         return True
 
-    def load_environment(self, obstacle_file="tracks/default.json"):
-        """Load obstacles and car position from a file if provided, otherwise use defaults."""
-        self.obstacles = []
+    def handle_push_collision(self, arbiter, space, data):
+        """Handle collision between car and pushable object"""
+        self.is_pushing = True
+        return True
 
-        if obstacle_file and os.path.exists(obstacle_file):
-            try:
-                with open(obstacle_file, "r") as f:
-                    config = json.load(f)
+    def handle_push_separation(self, arbiter, space, data):
+        """Handle separation between car and pushable object"""
+        self.is_pushing = False
+        return True
 
-                # Load car configuration
-                car_config = config.get(
-                    "car_start", {"x": 150, "y": 20, "r": 15, "angle": 1.4}
-                )
-                self.create_car(car_config["x"], car_config["y"], car_config["r"])
-                self.car_body.angle = car_config.get("angle", 1.4)
-
-                # Load walls
-                self.create_boundary_walls()
-
-                # Load obstacles
-                for wall in config.get("walls", []):
-                    self.obstacles.append(
-                        self.create_obstacle(
-                            wall["xy1"],
-                            wall["xy2"],
-                            wall.get("radius", 7),
-                            wall.get("color", "yellow"),
-                        )
-                    )
-
-                print(f"Loaded environment from {obstacle_file}")
-
-            except Exception as e:
-                print(f"Error loading obstacle file: {e}")
-        else:
-            # If no file, create default setup
-            self.create_car(150, 20, 15)
-            self.create_boundary_walls()
+    def handle_goal_collision(self, arbiter, space, data):
+        """Handle collision between pushable object and goal zone"""
+        # Get the shapes involved in the collision
+        shape1, shape2 = arbiter.shapes
+        
+        # Check if one of the shapes is the pushable object
+        if (shape1.body == self.pushable_object or shape2.body == self.pushable_object):
+            self.is_in_goal = True
+            return True
+        return False
 
     def create_boundary_walls(self):
         """Create the boundary walls of the environment."""
@@ -160,70 +228,92 @@ class GameState:
 
         self.space.add(self.car_body, self.car_shape)
 
+    def create_pushable_object(self, x, y, width, height, mass=2.0):
+        """Create a pushable object in the environment"""
+        # Double the size
+        width *= 2
+        height *= 2
+        
+        # Create body with damping
+        moment = pymunk.moment_for_box(mass, (width, height))
+        body = pymunk.Body(mass, moment)
+        body.position = x, y
+        body.angle = 0
+        body.damping = 0.8  # Add damping to make the object slow down over time
+        
+        # Create shape with increased friction
+        shape = pymunk.Poly.create_box(body, (width, height))
+        shape.friction = 1.0  # Increased friction to maximum
+        shape.elasticity = 0.1  # Reduced elasticity
+        
+        # Add to space
+        self.space.add(body, shape)
+        self.pushable_object = body
+        self.pushable_shape = shape
+
+    def create_goal_zone(self, x, y, width, height):
+        """Create a goal zone in the physics space"""
+        # Create static body for goal zone
+        self.goal_body = pymunk.Body(body_type=pymunk.Body.STATIC)
+        self.goal_body.position = x, y
+
+        # Create the shape
+        self.goal_shape = pymunk.Poly.create_box(self.goal_body, (width, height))
+        self.goal_shape.friction = 0.0
+        self.goal_shape.elasticity = 0.0
+        self.goal_shape.color = THECOLORS["green"]
+        self.goal_shape.collision_type = 4  # Unique collision type for goal zone
+
+        # Add to space
+        self.space.add(self.goal_body, self.goal_shape)
+
+    def check_goal(self):
+        """Check if the pushable object is in the goal zone"""
+        # The goal state is now managed by the collision handler
+        return self.is_in_goal
+
     def frame_step(self, action):
-        if action == 0:  # Turn left.
-            self.car_body.angle -= 0.3
-        elif action == 1:  # Turn right.
-            self.car_body.angle += 0.3
+        """Update the game state based on the action"""
+        # Reset goal state at start of each frame
+        self.is_in_goal = False
+        
+        # Update space damping
+        self.space.damping = 0.1  # Set to lower value for more damping
 
-        # Reset crash status at the start of each frame
-        self.crashed = False
-
-        # Get driving direction and apply velocity
-        driving_direction = Vec2d(1, 0).rotated(self.car_body.angle)
-
-        # Set velocity without overriding physics response from collisions
-        if not self.crashed:
-            self.car_body.velocity = 100 * driving_direction
-
-        # Take multiple smaller physics steps for better collision detection
-        for _ in range(5):  # 5 substeps for better accuracy
-            self.space.step(1.0 / 50)  # 5 substeps per frame = 1/10 sec total
-
-        # Update the screen
-        screen.fill(THECOLORS["black"])
-        self.space.debug_draw(draw_options)
-
-        if draw_screen:
-            pygame.display.flip()
-        clock.tick()
-
-        # Get the current location and the readings there.
-        x, y = self.car_body.position
-        readings = self.get_sonar_readings(x, y, self.car_body.angle)
-
-        # Check if car crashed based on sonar readings
-        if self.car_is_crashed(readings) or self.crashed:
-            self.crashed = True
-            readings.append(1)
-            # Slow down the car when crashed
-            self.car_body.velocity *= 0.5
-        else:
-            readings.append(0)
-
-        # Ensure car doesn't go out of bounds
+        # Update car's turning angle and velocity based on action
+        if action == 0:  # Turn left
+            self.car_body.angle += 0.1
+        elif action == 1:  # Turn right
+            self.car_body.angle -= 0.1
+        
+        # Move forward with constant velocity
+        self.car_body.velocity = (
+            math.cos(self.car_body.angle) * 100,
+            math.sin(self.car_body.angle) * 100
+        )
+        
+        # Step physics
+        self.space.step(1.0 / 60.0)
+        
+        # Check bounds
         self.check_bounds()
-
-        # Calculate base reward from features
-        base_reward = np.dot(self.W, readings)
-
-        # Add collision penalty to reward
-        collision_penalty = 0
-        if self.crashed and not self.was_crashed_last_frame:
-            # Only apply penalty on new crashes
-            collision_penalty = -10.0  # Significant penalty for each collision
-
-        # Store crash state for next frame
-        self.was_crashed_last_frame = self.crashed
-
-        # Combined reward
-        reward = base_reward + collision_penalty
-        state = np.array([readings])
-
-        self.num_steps += 1
-
-        # Return collision count along with other information
-        return reward, state, readings, self.collision_count
+        
+        # Draw the screen
+        if draw_screen:
+            screen.fill(THECOLORS["black"])  # Clear screen
+            self.space.debug_draw(draw_options)  # Draw physics objects
+            pygame.display.flip()  # Update display
+        
+        # Get state
+        state = self.get_state()
+        
+        # Calculate reward
+        reward = self.calculate_reward()
+        
+        # Get features
+        features = self.get_features()
+        
+        return reward, state, features, self.collision_count
 
     def check_bounds(self):
         """Check if car has gone out of bounds and correct if needed"""
@@ -312,16 +402,7 @@ class GameState:
         readings.append(float(ObstacleNumber[1] / 3.0))  # Yellow obstacles
         readings.append(float(ObstacleNumber[2] / 3.0))  # Brown obstacles
         readings.append(float(ObstacleNumber[3] / 3.0))  # Out of bounds
-
-        # Always include red boundary walls as a standard feature
         readings.append(float(ObstacleNumber[4] / 3.0))  # Red boundary walls
-
-        # Add normalized collision count as a feature
-        # Normalize by dividing by a reasonable maximum (e.g., 10)
-        readings.append(min(1.0, self.collision_count / 10.0))
-
-        if show_sensors:
-            pygame.display.update()
 
         return readings
 
@@ -353,9 +434,6 @@ class GameState:
                         i,
                         temp,
                     ]  # sensor hit an obstacle, return the type of obstacle
-
-            if show_sensors:
-                pygame.draw.circle(screen, (255, 255, 255), (rotated_p), 2)
 
         # Return the distance for the arm.
         return [i, 0]  # sensor did not hit anything return 0 for black space
@@ -390,10 +468,159 @@ class GameState:
         else:
             return 0  # for black space
 
+    def get_state(self):
+        """Get the current state vector"""
+        # Get car position and velocity
+        car_pos = self.car_body.position
+        car_vel = self.car_body.velocity
+        car_angle = self.car_body.angle
+        
+        # Get object position and velocity if it exists
+        obj_pos = (0, 0)
+        obj_vel = (0, 0)
+        if self.pushable_object:
+            obj_pos = self.pushable_object.position
+            obj_vel = self.pushable_object.velocity
+            
+        # Get goal position
+        goal_pos = (0, 0)
+        if self.goal_body:
+            goal_pos = self.goal_body.position
+            
+        # Calculate distances and angles
+        dist_to_obj = math.sqrt((car_pos.x - obj_pos.x)**2 + (car_pos.y - obj_pos.y)**2)
+        angle_to_obj = math.atan2(obj_pos.y - car_pos.y, obj_pos.x - car_pos.x) - car_angle
+        dist_to_goal = math.sqrt((obj_pos.x - goal_pos.x)**2 + (obj_pos.y - goal_pos.y)**2)
+        
+        # Normalize angles to [-pi, pi]
+        angle_to_obj = (angle_to_obj + math.pi) % (2 * math.pi) - math.pi
+        
+        # Create state vector
+        state = np.array([
+            # Car state
+            car_pos.x / 1000.0,  # Normalize by environment width
+            car_pos.y / 700.0,   # Normalize by environment height
+            car_vel.x / 10.0,    # Normalize velocity
+            car_vel.y / 10.0,
+            car_angle / math.pi, # Normalize angle to [-1, 1]
+            
+            # Object state
+            obj_pos.x / 1000.0,
+            obj_pos.y / 700.0,
+            obj_vel.x / 10.0,
+            obj_vel.y / 10.0,
+            
+            # Goal state
+            goal_pos.x / 1000.0,
+            goal_pos.y / 700.0,
+            
+            # Relative states
+            dist_to_obj / 1000.0,
+            math.sin(angle_to_obj),
+            math.cos(angle_to_obj),
+            dist_to_goal / 1000.0,
+            
+            # Contact state
+            1.0 if self.is_pushing else 0.0,
+            
+            # Collision count
+            self.collision_count / 10.0
+        ])
+        
+        return state
+
+    def calculate_reward(self):
+        """Calculate reward based on current state"""
+        # Get current positions
+        car_pos = self.car_body.position
+        obj_pos = self.pushable_object.position if self.pushable_object else (0, 0)
+        goal_pos = self.goal_body.position if self.goal_body else (0, 0)
+        
+        # Calculate distances
+        dist_to_obj = math.sqrt((car_pos.x - obj_pos.x)**2 + (car_pos.y - obj_pos.y)**2)
+        dist_to_goal = math.sqrt((obj_pos.x - goal_pos.x)**2 + (obj_pos.y - goal_pos.y)**2)
+        
+        # Get features
+        features = self.get_features()
+        
+        # Calculate reward components
+        reward = 0.0
+        
+        # Distance reduction reward
+        if hasattr(self, 'prev_dist_to_goal'):
+            dist_reduction = self.prev_dist_to_goal - dist_to_goal
+            reward += dist_reduction * 10.0  # Scale up distance reduction
+        
+        # Contact maintenance reward
+        if self.is_pushing:
+            reward += 0.1  # Small reward for maintaining contact
+        
+        # Goal reached bonus
+        if self.is_in_goal:
+            reward += 100.0
+        
+        # Collision penalty
+        if self.collision_count > 0:
+            reward -= 5.0 * self.collision_count
+        
+        # Time penalty
+        reward -= 0.01  # Small penalty per step
+        
+        # Update previous distance
+        self.prev_dist_to_goal = dist_to_goal
+        
+        return reward
+
+    def get_features(self):
+        """Get feature vector for reward calculation"""
+        # Get current positions
+        car_pos = self.car_body.position
+        obj_pos = self.pushable_object.position if self.pushable_object else (0, 0)
+        goal_pos = self.goal_body.position if self.goal_body else (0, 0)
+        
+        # Calculate distances and angles
+        dist_to_obj = math.sqrt((car_pos.x - obj_pos.x)**2 + (car_pos.y - obj_pos.y)**2)
+        angle_to_obj = math.atan2(obj_pos.y - car_pos.y, obj_pos.x - car_pos.x) - self.car_body.angle
+        dist_to_goal = math.sqrt((obj_pos.x - goal_pos.x)**2 + (obj_pos.y - goal_pos.y)**2)
+        
+        # Normalize angles to [-pi, pi]
+        angle_to_obj = (angle_to_obj + math.pi) % (2 * math.pi) - math.pi
+        
+        # Get sonar readings (8 features)
+        sonar_readings = self.get_sonar_readings(car_pos.x, car_pos.y, self.car_body.angle)
+        
+        # Create feature vector (16 features total)
+        features = [
+            # Sonar readings (8)
+            *sonar_readings,
+            
+            # Object features (3)
+            dist_to_obj / 1000.0,  # Normalize by environment width
+            math.sin(angle_to_obj),
+            math.cos(angle_to_obj),
+            
+            # Goal features (1)
+            dist_to_goal / 1000.0,
+            
+            # Contact state (1)
+            1.0 if self.is_pushing else 0.0,
+            
+            # Collision count (1)
+            self.collision_count / 10.0,
+            
+            # Goal state (1)
+            1.0 if self.is_in_goal else 0.0,
+            
+            # Crashed state (1)
+            1.0 if self.crashed else 0.0
+        ]
+        
+        return features
+
 
 if __name__ == "__main__":
     # Can work with either weights format
     weights = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
     game_state = GameState(weights)
     while True:
-        game_state.frame_step((random.randint(0, 2)))
+        game_state.frame_step((random.randint(0, 3)))

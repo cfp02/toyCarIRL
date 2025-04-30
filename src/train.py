@@ -337,87 +337,56 @@ def parse_args():
     return parser.parse_args()
 
 
-if __name__ == "__main__":
-    args = parse_args()
+def main():
+    parser = argparse.ArgumentParser(description="Train or evaluate the car agent")
+    parser.add_argument("--mode", choices=["train", "eval"], default="train", help="Mode to run in")
+    parser.add_argument("--env-path", type=str, default="tracks/default.json", help="Path to environment configuration")
+    parser.add_argument("--episodes", type=int, default=1000, help="Number of episodes to train")
+    parser.add_argument("--hidden-sizes", type=int, nargs="+", default=[164, 150], help="Hidden layer sizes")
+    parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
+    parser.add_argument("--gamma", type=float, default=0.99, help="Discount factor")
+    parser.add_argument("--buffer-size", type=int, default=100000, help="Replay buffer size")
+    parser.add_argument("--batch-size", type=int, default=64, help="Batch size")
+    parser.add_argument("--resume", action="store_true", help="Resume training from checkpoint")
+    args = parser.parse_args()
 
-    weights = [
-        3.96957075e-01,
-        1.60768375e-01,
-        3.85956376e-01,
-        2.17107187e-01,
-        5.31013934e-01,
-        1.89519667e-01,
-        0.00000000e00,
-        6.23592131e-02,
-        5.14246354e-01,
-        3.43368382e-02,
-    ]
+    # Initialize weights for the reward function
+    # Original weights: 10 dimensions
+    # New weights for pushing task: 16 dimensions
+    # [sonar1, sonar2, sonar3, black_space, yellow_obstacles, brown_obstacles, out_of_bounds, red_walls, collision_count,
+    #  distance_to_object, sin_angle_to_object, cos_angle_to_object, distance_to_goal, is_pushing, is_in_goal, crashed]
+    env_weights = [1.0] * 16  # Equal weights for all features
 
-    # Number of inputs (from the environment)
-    NUM_INPUT = len(weights)
-
-    # Create agent
+    # Initialize agent
+    state_size = 16  # Updated state size
+    action_size = 3  # Left, Right, Straight
     agent = DQNAgent(
-        state_size=NUM_INPUT,
-        action_size=3,
+        state_size=state_size,
+        action_size=action_size,
         hidden_sizes=args.hidden_sizes,
         learning_rate=args.lr,
         gamma=args.gamma,
         buffer_size=args.buffer_size,
         batch_size=args.batch_size,
-        target_update_freq=args.target_update,
-        reward_scaling=args.reward_scaling,
+        is_pushing_task=True  # Enable pushing task mode
     )
 
-    # Verify that the environment file exists
-    env_path = args.env_path
-    if not os.path.exists(env_path):
-        print(
-            f"Warning: Track file {env_path} not found, checking alternative paths..."
-        )
-        # Try with tracks/ prefix
-        alt_path = os.path.join("tracks", env_path)
-        if os.path.exists(alt_path):
-            env_path = alt_path
-            print(f"Found track at: {env_path}")
-        else:
-            # Try with .json extension
-            alt_path = os.path.join("tracks", f"{env_path}.json")
-            if os.path.exists(alt_path):
-                env_path = alt_path
-                print(f"Found track at: {env_path}")
-            else:
-                print("⚠️ Could not find track file, using default: tracks/default.json")
-                env_path = "tracks/default.json"
-
-    print(f"🚗 Using track file: {os.path.abspath(env_path)}")
-
     if args.mode == "train":
-        # If model path provided and not resuming, load it
-        if args.model_path and not args.resume:
-            agent.load(args.model_path)
-
-        # Train the agent with the specified environment
         train(
             agent=agent,
-            env_weights=weights,
-            env_path=env_path,
+            env_weights=env_weights,
+            env_path=args.env_path,
             num_episodes=args.episodes,
-            max_steps_per_episode=args.max_steps,
-            resume=args.resume,
+            max_steps_per_episode=1000,
+            resume=args.resume
         )
-
-    elif args.mode == "eval":
-        # Load model for evaluation
-        model_path = args.model_path or "saved-models/checkpoints/best_model.pth"
-        if not agent.load(model_path):
-            print("Cannot evaluate without a trained model.")
-            exit(1)
-
-        # Evaluate the agent with the specified environment
+    else:
         evaluate(
             agent=agent,
-            env_weights=weights,
-            env_path=env_path,
-            num_episodes=args.episodes,
+            env_weights=env_weights,
+            env_path=args.env_path
         )
+
+
+if __name__ == "__main__":
+    main()

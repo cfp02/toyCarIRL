@@ -9,6 +9,8 @@ Controls:
 - RIGHT ARROW: Turn right
 - UP ARROW: Move forward (default)
 - DOWN ARROW: Exit and save trajectory
+- R: Reset current demonstration
+- Q: Quit collection
 
 Always exit using the DOWN ARROW key rather than Ctrl+C to ensure proper cleanup.
 """
@@ -26,9 +28,9 @@ from tqdm import tqdm
 
 from flat_game import carmunk
 
-NUM_STATES = 10
+NUM_STATES = 16  # Updated for pushing task
 GAMMA = 0.9  # Discount factor
-DEFAULT_FPS = 10
+DEFAULT_FPS = 30  # Increased for smoother control
 MAX_EPISODE_LENGTH = 5000
 DATA_DIR = Path("demonstrations")
 
@@ -60,6 +62,7 @@ class TrajectoryRecorder:
         self.prev_feature_expectations = np.zeros(self.feature_dim)
         self.step_count = 0
         self.current_collision_count = 0
+        self.is_in_goal = False
 
     def record_step(
         self,
@@ -68,6 +71,7 @@ class TrajectoryRecorder:
         reward: float,
         features: List[float],
         collision_count: int,
+        is_in_goal: bool,
     ) -> None:
         """
         Record a single step in the trajectory.
@@ -78,16 +82,17 @@ class TrajectoryRecorder:
             reward: The reward received
             features: The feature vector
             collision_count: Current collision count
+            is_in_goal: Whether the object is in the goal zone
         """
         self.states.append(state.copy())
         self.actions.append(action)
         self.rewards.append(reward)
         self.features.append(features.copy())
         self.collisions.append(collision_count)
+        self.is_in_goal = is_in_goal
 
         # Detect collisions
         if collision_count > self.current_collision_count:
-            # print(f"Collision #{collision_count} at step {self.step_count}")
             self.current_collision_count = collision_count
 
         self.step_count += 1
@@ -135,6 +140,7 @@ class TrajectoryRecorder:
             "metadata": {
                 "length": self.step_count,
                 "total_collisions": self.current_collision_count,
+                "is_in_goal": self.is_in_goal,
                 "gamma": self.gamma,
                 "timestamp": time.strftime("%Y%m%d_%H%M%S"),
             },
@@ -150,6 +156,7 @@ def play_and_record(
     obstacle_file: Optional[str] = None,
     output_file: Optional[str] = None,
     fps: int = DEFAULT_FPS,
+    num_demos: int = 5,
 ) -> None:
     """
     Play the game with manual control and record expert trajectory.
@@ -158,6 +165,7 @@ def play_and_record(
         obstacle_file: Path to obstacle configuration file
         output_file: Path to save the trajectory data
         fps: Frames per second for game display
+        num_demos: Number of demonstrations to collect
 
     Returns:
         Trajectory data dictionary
@@ -170,18 +178,8 @@ def play_and_record(
         else carmunk.GameState(weights, obstacle_file)
     )
 
-    recorder = TrajectoryRecorder(weights)
-    reward, state, features, collision_count = game_state.frame_step(
-        2
-    )  # Start with forward motion
-
-    clock = pygame.time.Clock()
-    progress = tqdm(
-        total=MAX_EPISODE_LENGTH,
-        desc="Recording trajectory",
-        unit="steps",
-        dynamic_ncols=True,
-    )
+    demonstrations = []
+    demo_count = 0
 
     # Print instructions
     print("\n--- Manual Control for Expert Demonstrations ---")
@@ -190,139 +188,146 @@ def play_and_record(
     print("  RIGHT: Turn right")
     print("  UP: Move forward (default)")
     print("  DOWN: Exit and save trajectory")
-    print(f"Recording at {fps} FPS. Max episode length: {MAX_EPISODE_LENGTH} steps.\n")
+    print("  R: Reset current demonstration")
+    print("  Q: Quit collection")
+    print(f"Recording at {fps} FPS. Max episode length: {MAX_EPISODE_LENGTH} steps.")
+    print(f"Collecting {num_demos} demonstrations.\n")
 
-    # Main game loop
-    try:
-        running = True
-        action = 2  # Default action is forward
-        while running and recorder.step_count < MAX_EPISODE_LENGTH:
-            # Handle pygame events
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    running = False
-                elif event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_LEFT:
-                        action = 1
-                    elif event.key == pygame.K_RIGHT:
-                        action = 0
-                    elif event.key == pygame.K_UP:
-                        action = 2
-                    elif event.key == pygame.K_DOWN:
+    while demo_count < num_demos:
+        recorder = TrajectoryRecorder(weights)
+        reward, state, features, collision_count = game_state.frame_step(2)  # Start with forward motion
+
+        clock = pygame.time.Clock()
+        progress = tqdm(
+            total=MAX_EPISODE_LENGTH,
+            desc=f"Recording demonstration {demo_count + 1}/{num_demos}",
+            unit="steps",
+            dynamic_ncols=True,
+        )
+
+        # Main game loop
+        try:
+            running = True
+            action = 2  # Default action is forward
+            while running and recorder.step_count < MAX_EPISODE_LENGTH:
+                # Handle pygame events
+                for event in pygame.event.get():
+                    if event.type == pygame.QUIT:
                         running = False
-                        break
-                elif event.type == pygame.KEYUP:
-                    # When key is released, go back to forward motion
-                    if event.key in [pygame.K_LEFT, pygame.K_RIGHT]:
-                        action = 2
+                    elif event.type == pygame.KEYDOWN:
+                        if event.key == pygame.K_LEFT:
+                            action = 1
+                        elif event.key == pygame.K_RIGHT:
+                            action = 0
+                        elif event.key == pygame.K_UP:
+                            action = 2
+                        elif event.key == pygame.K_DOWN:
+                            running = False
+                            break
+                        elif event.key == pygame.K_r:
+                            running = False
+                            break
+                        elif event.key == pygame.K_q:
+                            return demonstrations
+                    elif event.type == pygame.KEYUP:
+                        # When key is released, go back to forward motion
+                        if event.key in [pygame.K_LEFT, pygame.K_RIGHT]:
+                            action = 2
 
-            # Take action in environment - FIX: Unpack 4 values instead of 3
-            reward, new_state, features, collision_count = game_state.frame_step(action)
+                # Take action in environment
+                reward, new_state, features, collision_count = game_state.frame_step(action)
 
-            # Record step
-            recorder.record_step(state, action, reward, features, collision_count)
-            state = new_state
-
-            # Update progress bar every 10 steps
-            if recorder.step_count % 10 == 0:
-                progress.n = recorder.step_count
-                progress.update(0)
-                progress.set_postfix(
-                    {
-                        "change": f"{recorder.get_change_percentage():.2f}%",
-                        "collisions": collision_count,
-                    }
+                # Record step
+                recorder.record_step(
+                    state, action, reward, features, collision_count, game_state.is_in_goal
                 )
+                state = new_state
 
-            # Calculate and display feature expectation changes periodically
-            if recorder.step_count % 100 == 0:
-                recorder.get_change_percentage()
-                recorder.update_prev_expectations()
+                # Update progress bar every 10 steps
+                if recorder.step_count % 10 == 0:
+                    progress.n = recorder.step_count
+                    progress.update(0)
+                    progress.set_postfix(
+                        {
+                            "change": f"{recorder.get_change_percentage():.2f}%",
+                            "collisions": collision_count,
+                            "in_goal": game_state.is_in_goal,
+                        }
+                    )
 
-            # Control frame rate
-            clock.tick(fps)
-    finally:
-        progress.close()
+                # Calculate and display feature expectation changes periodically
+                if recorder.step_count % 100 == 0:
+                    recorder.get_change_percentage()
+                    recorder.update_prev_expectations()
 
-        # Calculate feature expectations
-        if recorder.step_count > 100:
-            # Normalize FE to be length-independent
-            recorded_steps = recorder.step_count - 100
-            norm_factor = (
-                (1 - GAMMA) / (1 - GAMMA**recorded_steps) if recorded_steps > 0 else 1
-            )
-            feature_expectations = recorder.feature_expectations * norm_factor
-        else:
-            feature_expectations = np.zeros(recorder.feature_dim)
+                # Check if demonstration is complete
+                if game_state.is_in_goal:
+                    print(f"✅ Demonstration {demo_count + 1} completed successfully!")
+                    demonstrations.append(recorder)
+                    demo_count += 1
+                    running = False
 
-        print("\n=== Feature Expectations for IRL ===")
-        print("[")
-        for i, fe in enumerate(feature_expectations):
-            end_char = "," if i < len(feature_expectations) - 1 else ""
-            print(f"    {fe:.8e}{end_char}")
-        print("]")
-        print("====================================")
+                # Control frame rate
+                clock.tick(fps)
+        finally:
+            progress.close()
 
-        if output_file is None:
-            DATA_DIR.mkdir(exist_ok=True)
-            track_name = (
-                os.path.splitext(os.path.basename(obstacle_file))[0]
-                if obstacle_file
-                else "default"
-            )
-            timestamp = time.strftime("%Y%m%d_%H%M%S")
-            output_file = str(DATA_DIR / f"trajectory_{track_name}_{timestamp}.json")
+            # Save the trajectory if it was completed
+            if game_state.is_in_goal:
+                if output_file:
+                    recorder.save_trajectory(output_file)
+                else:
+                    # Generate filename with timestamp
+                    timestamp = time.strftime("%Y%m%d_%H%M%S")
+                    track_name = os.path.splitext(os.path.basename(obstacle_file))[0]
+                    filename = f"demonstrations/trajectory_{track_name}_{timestamp}.json"
+                    recorder.save_trajectory(filename)
 
-        # Save trajectory
-        recorder.save_trajectory(output_file)
+            # Reset environment for next demonstration
+            game_state = carmunk.GameState(weights, obstacle_file)
 
-        print(f"\nRecorded {recorder.step_count} steps")
-        print(f"Total collisions: {recorder.current_collision_count}")
+    return demonstrations
 
 
-if __name__ == "__main__":
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(
-        description="Manually control the car and record expert trajectories for IRL/RL."
-    )
+def main():
+    parser = argparse.ArgumentParser(description="Collect expert demonstrations")
     parser.add_argument(
         "--track",
-        "-t",
         type=str,
-        default=None,
-        help="Path or name of obstacle configuration file (default: tracks/default.json)",
+        default="tracks/pushing.json",
+        help="Track file to use (default: tracks/pushing.json)",
     )
     parser.add_argument(
         "--output",
-        "-o",
         type=str,
-        default=None,
-        help="Path to save the trajectory data (default: demonstrations/trajectory_<track>_<timestamp>.json)",
+        help="Output file path for the trajectory data",
     )
     parser.add_argument(
         "--fps",
-        "-f",
         type=int,
         default=DEFAULT_FPS,
-        help=f"Frames per second for game display (default: {DEFAULT_FPS})",
+        help=f"Frames per second (default: {DEFAULT_FPS})",
+    )
+    parser.add_argument(
+        "--num-demos",
+        type=int,
+        default=5,
+        help="Number of demonstrations to collect (default: 5)",
     )
     args = parser.parse_args()
 
-    # Resolve track path if provided
-    obstacle_file = None
-    if args.track:
-        # Try to locate the track file
-        if os.path.isfile(args.track):
-            obstacle_file = args.track
-        elif os.path.isfile(f"tracks/{args.track}"):
-            obstacle_file = f"tracks/{args.track}"
-        elif os.path.isfile(f"tracks/{args.track}.json"):
-            obstacle_file = f"tracks/{args.track}.json"
-        if not obstacle_file:
-            print(f"Warning: Could not find track file at {args.track}")
-            print("Using default track instead.")
-
-    # Play and record trajectory
-    trajectory_data = play_and_record(
-        obstacle_file=obstacle_file, output_file=args.output, fps=args.fps
+    # Collect demonstrations
+    print(f"Collecting {args.num_demos} demonstrations using track: {args.track}")
+    demonstrations = play_and_record(
+        obstacle_file=args.track,
+        output_file=args.output,
+        fps=args.fps,
+        num_demos=args.num_demos,
     )
+
+    if demonstrations:
+        print(f"\nSuccessfully collected {len(demonstrations)} demonstrations!")
+
+
+if __name__ == "__main__":
+    main()

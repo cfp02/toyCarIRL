@@ -86,6 +86,7 @@ class DQNAgent:
         target_update_freq: int = 1000,
         use_dueling_dqn: bool = False,
         reward_scaling: float = 1.0,
+        is_pushing_task: bool = False,  # New parameter to indicate pushing task
     ):
         self.state_size = state_size
         self.action_size = action_size
@@ -99,6 +100,7 @@ class DQNAgent:
         self.target_update_freq = target_update_freq
         self.use_dueling_dqn = use_dueling_dqn
         self.reward_scaling = reward_scaling
+        self.is_pushing_task = is_pushing_task
 
         # Initialize networks
         self.policy_net = DQN(state_size, hidden_sizes, action_size).to(device)
@@ -185,7 +187,9 @@ class DQNAgent:
         )
 
     def memorize(self, state, action, reward, next_state, done):
-        reward = reward * self.reward_scaling
+        # Scale rewards for pushing task
+        if self.is_pushing_task:
+            reward = reward * self.reward_scaling
         self.memory.add(state, action, reward, next_state, done)
 
     def learn(self):
