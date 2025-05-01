@@ -98,11 +98,10 @@ class DQNAgent:
         state_size: int,
         action_size: int,
         hidden_sizes: List[int],
-        learning_rate: float = 2e-4,
+        learning_rate: float = 1e-3,
         gamma: float = 0.99,
-        epsilon_start: float = 1.0,
+        epsilon_start: float = 0.8,
         epsilon_end: float = 0.1,
-        epsilon_decay: float = 200000,
         buffer_size: int = 100000,
         batch_size: int = 64,
         target_update_freq: int = 1000,
@@ -115,8 +114,8 @@ class DQNAgent:
         self.learning_rate = learning_rate
         self.gamma = gamma
         self.epsilon = epsilon_start
+        self.epsilon_start = epsilon_start
         self.epsilon_end = epsilon_end
-        self.epsilon_decay = epsilon_decay
         self.batch_size = batch_size
         self.target_update_freq = target_update_freq
         self.use_dueling_dqn = use_dueling_dqn
@@ -193,36 +192,42 @@ class DQNAgent:
                 return False
 
     def act(self, state, evaluate=False):
-        if not evaluate and random.random() < self.epsilon:
-            return random.randrange(self.action_size)
+        # Convert numpy array to tensor
+        if isinstance(state, np.ndarray):
+            state = torch.FloatTensor(state).to(device)
 
-        self.policy_net.eval()
-
-        state = torch.FloatTensor(state).unsqueeze(0).to(device)
+        # Temporarily set policy_net to eval mode for action selection
         with torch.no_grad():
-            q_values = self.policy_net(state)
+            training_mode = self.policy_net.training  # Save current mode
+            self.policy_net.eval()  # Set to evaluation mode
 
-        if not evaluate:
-            self.policy_net.train()
-        return q_values.argmax().item()
+            if state.dim() == 1:
+                state = state.unsqueeze(0)
+
+            # Use epsilon-greedy policy
+            if random.random() > self.epsilon or evaluate:
+                q_values = self.policy_net(state)
+                action = torch.argmax(q_values).item()
+            else:
+                action = random.randrange(self.action_size)
+
+            # Restore previous training mode
+            self.policy_net.train(training_mode)
+
+            return action
 
     def update_epsilon(self, frame):
-        self.epsilon = self.epsilon_end + (self.epsilon - self.epsilon_end) * np.exp(
-            -1.0 * frame / self.epsilon_decay
+        decay_steps = 35000  # Total steps to decay over
+        # Linear interpolation between start and end
+        self.epsilon = max(
+            self.epsilon_end,
+            self.epsilon_start
+            - (self.epsilon_start - self.epsilon_end) * min(1.0, frame / decay_steps),
         )
 
     def memorize(self, state, action, reward, next_state, done):
         reward = reward * self.reward_scaling
         self.memory.add(state, action, reward, next_state, done)
-
-    def update_target_network(self):
-        tau = 0.05  # Soft update parameter
-        for target_param, local_param in zip(
-            self.target_net.parameters(), self.policy_net.parameters()
-        ):
-            target_param.data.copy_(
-                tau * local_param.data + (1.0 - tau) * target_param.data
-            )
 
     def learn(self):
         if len(self.memory) < self.batch_size:
@@ -253,11 +258,12 @@ class DQNAgent:
         # Optimize the model
         self.optimizer.zero_grad()
         weighted_loss.backward()
-        torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), max_norm=1.0)
+        torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), 1.0)
         self.optimizer.step()
 
         # Update target network
         self.training_steps += 1
-        self.update_target_network()
+        if self.training_steps % self.target_update_freq == 0:
+            self.target_net.load_state_dict(self.policy_net.state_dict())
 
         return loss.mean().item()

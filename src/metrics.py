@@ -111,6 +111,8 @@ class IRLTracker:
         episode: int,
         avg_reward: float,
         avg_loss: float,
+        avg_length: int,
+        collisions: int,
     ):
         """Add data point for training progress within an iteration."""
         data = {
@@ -119,6 +121,8 @@ class IRLTracker:
             "timestamp": int(time.time()),
             "avg_reward": avg_reward,
             "avg_loss": avg_loss,
+            "episode_length": avg_length,  # New field
+            "collision_count": collisions,  # New field
         }
 
         self.training_progress.append(data)
@@ -210,7 +214,7 @@ class IRLTracker:
         ax.grid(True)
         ax.legend()
 
-        # Plot losses
+        # Plot loss with inverted y-axis
         ax = axs[0, 1]
         for i, iter_num in enumerate(sorted(iterations.keys())):
             iter_data = sorted(iterations[iter_num], key=lambda x: x["episode"])
@@ -219,18 +223,52 @@ class IRLTracker:
             color = colors[i % len(colors)]
             ax.plot(episodes, losses, "-", color=color, label=f"Iter {iter_num}")
 
-        ax.set_title("Average Loss During Training")
+        ax.set_title("Loss During Training")
         ax.set_xlabel("Episode")
-        ax.set_ylabel("Average Loss")
+        ax.set_ylabel("Loss")
+        ax.grid(True)
+        ax.invert_yaxis()  # Invert y-axis to show improvement going up
+        ax.legend()
+
+        # Plot episode length
+        ax = axs[1, 0]
+        for i, iter_num in enumerate(sorted(iterations.keys())):
+            iter_data = sorted(iterations[iter_num], key=lambda x: x["episode"])
+            episodes = [d["episode"] for d in iter_data]
+            # Check if episode_length data exists
+            if any(d.get("episode_length") is not None for d in iter_data):
+                lengths = [d.get("episode_length", 0) for d in iter_data]
+                color = colors[i % len(colors)]
+                ax.plot(episodes, lengths, "-", color=color, label=f"Iter {iter_num}")
+
+        ax.set_title("Episode Length During Training")
+        ax.set_xlabel("Episode")
+        ax.set_ylabel("Steps per Episode")
+        ax.grid(True)
+        ax.legend()
+
+        # Plot collision count
+        ax = axs[1, 1]
+        for i, iter_num in enumerate(sorted(iterations.keys())):
+            iter_data = sorted(iterations[iter_num], key=lambda x: x["episode"])
+            episodes = [d["episode"] for d in iter_data]
+            # Check if collision_count data exists
+            if any(d.get("collision_count") is not None for d in iter_data):
+                collisions = [d.get("collision_count", 0) for d in iter_data]
+                color = colors[i % len(colors)]
+                ax.plot(
+                    episodes, collisions, "-", color=color, label=f"Iter {iter_num}"
+                )
+
+        ax.set_title("Collisions During Training")
+        ax.set_xlabel("Episode")
+        ax.set_ylabel("Number of Collisions")
         ax.grid(True)
         ax.legend()
 
         plt.tight_layout()
         plt.savefig(os.path.join(self.plots_dir, "training_progress.png"))
         plt.close()
-
-        # Plot convergence metrics over time
-        self._plot_convergence_over_time()
 
     def _plot_weights(self):
         """Plot the evolution of weights across iterations."""
@@ -261,76 +299,6 @@ class IRLTracker:
         plt.legend(loc="center left", bbox_to_anchor=(1, 0.5))
         plt.tight_layout()
         plt.savefig(os.path.join(self.plots_dir, "weight_evolution.png"))
-        plt.close()
-
-    def _plot_convergence_over_time(self):
-        """Plot convergence metrics over wall-clock time."""
-        if not self.training_progress:
-            return
-
-        # Calculate cumulative time
-        start_time = min(d["timestamp"] for d in self.training_progress)
-
-        # Initialize plot
-        fig, ax = plt.subplots(figsize=(12, 6))
-
-        # Group by iteration
-        iterations = {}
-        for data in self.training_progress:
-            iter_num = data["iteration"]
-            if iter_num not in iterations:
-                iterations[iter_num] = []
-
-            # Convert timestamp to hours from start
-            hours = (data["timestamp"] - start_time) / 3600
-
-            # Store the data with time info
-            item = data.copy()
-            item["hours_elapsed"] = hours
-            iterations[iter_num].append(item)
-
-        # Plot rewards over time
-        colormap = plt.get_cmap("tab10")
-        colors = [colormap(i) for i in range(10)]  # Get 10 colors from the colormap
-        markers = ["o", "s", "^", "D", "v", "<", ">", "p", "*", "h"]
-
-        for i, iter_num in enumerate(sorted(iterations.keys())):
-            iter_data = sorted(iterations[iter_num], key=lambda x: x["timestamp"])
-            hours = [d["hours_elapsed"] for d in iter_data]
-            rewards = [d["avg_reward"] for d in iter_data]
-
-            color = colors[i % len(colors)]
-            marker = markers[i % len(markers)]
-
-            ax.plot(
-                hours,
-                rewards,
-                "-",
-                color=color,
-                marker=marker,
-                markersize=5,
-                label=f"Iteration {iter_num}",
-            )
-
-            # Mark the end of each iteration
-            if hours:
-                ax.plot(hours[-1], rewards[-1], "o", color=color, markersize=10)
-
-        # Add vertical lines between iterations using iteration data if available
-        if len(self.iterations_data) > 1:
-            iter_timestamps = sorted([d["timestamp"] for d in self.iterations_data])
-            for ts in iter_timestamps[:-1]:  # Skip the last one
-                hours = (ts - start_time) / 3600
-                ax.axvline(x=hours, color="gray", linestyle="--", alpha=0.5)
-
-        ax.set_title("Training Progress Over Time")
-        ax.set_xlabel("Hours Elapsed")
-        ax.set_ylabel("Average Reward")
-        ax.grid(True)
-        ax.legend(loc="best")
-
-        plt.tight_layout()
-        plt.savefig(os.path.join(self.plots_dir, "time_convergence.png"))
         plt.close()
 
     def generate_summary_report(self):

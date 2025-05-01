@@ -151,19 +151,13 @@ class irlAgent:
     def optimalWeightFinder(self):
         f = open("weights-" + self.behavior + ".txt", "w")
         i = 1
-        while True:
-            W = self.optimization()
-            print("weights ::", W)
-            f.write(str(W))
-            f.write("\n")
-            print("the distances  ::", self.policiesFE.keys())
-            self.currentT = self.policyListUpdater(W, i)
-            print("Current distance (t) is:: ", self.currentT)
-            if (
-                self.currentT <= self.epsilon
-            ):  # terminate if the point reached close enough
-                break
-            i += 1
+        W = self.optimization()
+        print("weights ::", W)
+        f.write(str(W))
+        f.write("\n")
+        print("the distances  ::", self.policiesFE.keys())
+        self.currentT = self.policyListUpdater(W, i)
+        print("Current distance (t) is:: ", self.currentT)
         f.close()
 
         # Generate final summary report
@@ -217,8 +211,8 @@ if __name__ == "__main__":
         "--frames",
         "-f",
         type=int,
-        default=100000,
-        help="Number of frames for training (default: 100000)",
+        default=50000,
+        help="Number of frames for training (default: 50000)",
     )
     parser.add_argument(
         "--continue",

@@ -305,7 +305,7 @@ class GameState:
             self.crashed = True
             # Slow down the car when crashed
             self.car_body.velocity *= 0.5
-            reward -= 2
+            reward -= 1
 
         # Store crash state for next frame
         self.was_crashed_last_frame = self.crashed
@@ -314,7 +314,7 @@ class GameState:
 
         self.num_steps += 1
 
-        if self.num_steps >= MAX_EPISODE_LENGTH:
+        if self.num_steps >= MAX_EPISODE_LENGTH or self.collision_count >= 15:
             done = True
 
         # Return collision count along with other information

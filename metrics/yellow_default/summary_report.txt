@@ -1,0 +1,25 @@
+IRL TRAINING SUMMARY
+===================
+
+Behavior: yellow
+Track: default
+Frames: 50000
+
+ITERATION SUMMARY
+-----------------
+Iteration  T-Value         Avg Reward      Avg Loss       
+1          0.542313        -28.816143      5693274.763770 
+
+FINAL WEIGHTS
+------------
+w1: 0.329623
+w2: -0.372810
+w3: 0.215326
+w4: -0.344812
+w5: 0.385016
+w6: -0.180656
+w7: 0.021240
+w8: -0.490408
+w9: -0.406540
+
+Plots saved to: metrics\yellow_default\plots

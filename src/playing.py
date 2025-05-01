@@ -7,7 +7,6 @@ import argparse
 import os
 
 import numpy as np
-
 from flat_game import carmunk
 from nn import DQNAgent
 
@@ -36,7 +35,7 @@ def play(agent, weights, track_file="tracks/default.json"):
 
         # Start recording feature expectations only after 100 frames
         if car_distance > 100:
-            featureExpectations += (GAMMA ** (car_distance - 101)) * np.array(readings)
+            featureExpectations += (GAMMA * (car_distance - 101)) * np.array(readings)
 
         # Tell us something and break after a certain distance
         if done:
@@ -51,11 +50,11 @@ if __name__ == "__main__":
         description="Run a trained model with a specific track"
     )
     parser.add_argument(
-        "--model",
-        "-m",
+        "--behavior",
+        "-b",
         type=str,
-        default="saved-models/checkpoints/best_model.pth",
-        help="Model path (default: saved-models/checkpoints/best_model.pth)",
+        default="custom",
+        help="Behavior name (default: custom)",
     )
     parser.add_argument(
         "--track",
@@ -73,47 +72,49 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    if not os.path.exists(args.model):
-        print(f"Error: Model file not found at {args.model}")
-        exit(1)
+    # Update global variables from arguments
+    BEHAVIOR = args.behavior
+    FRAMES = args.frames
+    track_file = args.track
 
-    # Resolve the track file path if provided
-    track_file = "tracks/default.json"
-    if args.track:
-        potential_paths = [
-            args.track,
-            os.path.join("tracks", args.track),
-            os.path.join(
-                "tracks", f"{args.track}.json"
-            ),  # In tracks folder with .json extension
-        ]
-
-        for path in potential_paths:
-            if os.path.exists(path):
-                track_file = path
-                print(f"Using track file: {path}")
-                break
+    if not os.path.exists(track_file):
+        print(
+            f"Warning: Track file {track_file} not found, checking alternative paths..."
+        )
+        alt_path = os.path.join("tracks", track_file)
+        if os.path.exists(alt_path):
+            track_file = alt_path
+            print(f"Using track file: {track_file}")
+        else:
+            alt_path = os.path.join("tracks", f"{track_file}.json")
+            if os.path.exists(alt_path):
+                track_file = alt_path
+                print(f"Using track file: {track_file}")
             else:
-                print(f"Warning: Could not find track file at {args.track}")
-                print(f"Tried: {potential_paths}")
-                print("Using default track instead.")
+                print("Could not find track file, using default: tracks/default.json")
+                track_file = "tracks/default.json"
 
-    # Model path for the PyTorch model
-    print(f"Loading model from: {args.model}")
+    print(f"Using track file: {track_file}")
+    print(f"Behavior: {BEHAVIOR}")
+    print(f"Playing frames: {FRAMES}")
 
-    # change this to change reward function, this should match whatever model you load. TODO: make arg
-    weights = [
-        3.96957075e-01,
-        1.60768375e-01,
-        3.85956376e-01,
-        2.17107187e-01,
-        5.31013934e-01,
-        1.89519667e-01,
-        0.00000000e00,
-        6.23592131e-02,
-        5.14246354e-01,
-        3.43368382e-02,
-    ]
+    # Define path to the weights file
+    behavior_str = BEHAVIOR if BEHAVIOR else "custom"
+    weights_file = f"weights-{behavior_str}.txt"
+
+    try:
+        # Load weights from file - handling brackets properly
+        with open(weights_file, "r") as f:
+            weights_text = f.read()
+            # Strip brackets and split by whitespace
+            weights_text = weights_text.strip("[]")
+            weights = np.fromstring(weights_text, sep=" ")
+        print(f"Loaded weights from {weights_file}")
+        print(f"Weights: {weights}")
+    except FileNotFoundError:
+        print(f"Warning: Weights file {weights_file} not found, using default weights")
+        # Default weights if file not found
+        weights = np.ones(NUM_STATES) / NUM_STATES
 
     agent = DQNAgent(
         state_size=NUM_STATES,
@@ -122,9 +123,17 @@ if __name__ == "__main__":
     )
 
     # Load the model
-    if not agent.load(args.model):
-        print(f"Failed to load model from {args.model}")
+    # Construct path to model file
+    model_path = (
+        f"saved-models/{BEHAVIOR}_models/evaluatedPolicies/checkpoints_1/best_model.pth"
+    )
+
+    # Try to load the model
+    if not agent.load(model_path):
+        print(f"Failed to load model from {model_path}")
         exit(1)
+    else:
+        print(f"Successfully loaded model from {model_path}")
 
     # Set to evaluation mode
     agent.policy_net.eval()

@@ -19,7 +19,7 @@ def train(
     env_path: str,
     num_episodes: int,
     max_steps_per_episode: int,
-    log_interval: int = 10,
+    log_interval: int = 100,
     save_interval: int = 100,
     checkpoint_dir: str = "saved-models/checkpoints",
     log_dir: str = "logs",
@@ -47,7 +47,8 @@ def train(
     total_frames = 0
     all_rewards = []
     all_lengths = []
-    all_losses = []  # Track losses
+    all_losses = []
+    all_collisions = []
 
     # Track best performance
     best_reward = float("-inf")
@@ -59,13 +60,11 @@ def train(
     from collections import deque
 
     # Conditons for early stopping
-    early_stop_window = 100
+    early_stop_window = 500
     recent_rewards = deque(maxlen=early_stop_window)
 
     # Define a frequency for updating the tracker during training
-    training_update_interval = max(
-        1, num_episodes // 20
-    )  # Update ~20 times during training
+    training_update_interval = 1
 
     for episode in progress_bar:
         action = 2
@@ -78,9 +77,10 @@ def train(
 
         while steps < max_steps_per_episode:
             # Select action
-            action = agent.act(state)
-            reward, next_state, _, _, done = env.frame_step(action)
+            action = int(agent.act(state))
+            reward, next_state, _, collision_count, done = env.frame_step(action)
             next_state = next_state.reshape(-1)
+            all_collisions.append(collision_count)
 
             # Store transition in memory
             agent.memorize(state, action, reward, next_state, done)
@@ -101,6 +101,7 @@ def train(
             total_frames += 1
             if done:
                 env.reset_car()
+                break
 
         recent_rewards.append(episode_reward)
 
@@ -140,7 +141,7 @@ def train(
         all_rewards.append(episode_reward)
         all_lengths.append(steps)
         avg_loss = episode_loss / steps if steps > 0 else 0
-        all_losses.append(avg_loss)  # Store average loss for the episode
+        all_losses.append(avg_loss)
 
         # Update progress bar
         progress_bar.set_postfix(
@@ -172,6 +173,16 @@ def train(
                 if len(all_losses) >= 100
                 else np.mean(all_losses)
             )
+            avg_length_window = (
+                np.mean(all_lengths[-100:])
+                if len(all_lengths) >= 100
+                else np.mean(all_lengths)
+            )
+            avg_collisions_window = (
+                np.mean(all_collisions[-100:])
+                if len(all_collisions) >= 100
+                else np.mean(all_collisions)
+            )
 
             # Add training progress data point
             tracker.add_training_progress(
@@ -179,6 +190,8 @@ def train(
                 episode=episode,  # Current training episode
                 avg_reward=avg_reward_window,
                 avg_loss=avg_loss_window,
+                avg_length=avg_length_window,
+                collisions=avg_collisions_window,
             )
 
             # Generate updated plots
@@ -211,14 +224,14 @@ def train(
             agent.save(os.path.join(checkpoint_dir, "latest.pth"))
 
         # Save best model
-        if len(all_rewards) >= 100:
-            avg_reward = np.mean(all_rewards[-100:])
+        if len(all_rewards) >= 250:
+            avg_reward = np.mean(all_rewards[-50:])
             if avg_reward > best_reward:
                 best_reward = avg_reward
                 agent.save(os.path.join(checkpoint_dir, "best_model.pth"))
-                tqdm.write(
-                    f"New best model saved with average reward: {best_reward:.2f}"
-                )
+                # tqdm.write(
+                #     f"New best model saved with average reward: {best_reward:.2f}"
+                # )
 
     # Final save
     agent.save(os.path.join(checkpoint_dir, "final_model.pth"))
@@ -245,7 +258,7 @@ def evaluate(
     lengths = []
 
     for episode in range(num_episodes):
-        env.reset_car
+        env.reset_car()
         action = 2
         _, state, _, collisions, done = env.frame_step(action)
         state = state.reshape(-1)
@@ -254,7 +267,7 @@ def evaluate(
         steps = 0
         while steps < MAX_EPISODE_LENGTH:
             # Select action without exploration
-            action = agent.act(state, evaluate=True)
+            action = int(agent.act(state, evaluate=True))
             reward, next_state, _, next_collisions, done = env.frame_step(action)
             next_state = next_state.reshape(-1)  # Flatten
 
@@ -265,6 +278,7 @@ def evaluate(
             steps += 1
             if done:
                 env.reset_car()
+                break
 
         rewards.append(episode_reward)
         lengths.append(steps)
