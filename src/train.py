@@ -122,11 +122,11 @@ def train(
             converged = reward_stable and mean_reward > 40
 
             # Log convergence info periodically
-            if (episode + 1) % log_interval == 0:
-                tqdm.write(
-                    f"Convergence: mean={mean_reward:.1f}, std={std_reward:.1f}, "
-                    f"stability_ratio={std_reward / abs(mean_reward):.3f} (target ≤ 0.1), converged={converged}"
-                )
+            # if (episode + 1) % log_interval == 0:
+            #     tqdm.write(
+            #         f"Convergence: mean={mean_reward:.1f}, std={std_reward:.1f}, "
+            #         f"stability_ratio={std_reward / abs(mean_reward):.3f} (target ≤ 0.1), converged={converged}"
+            #     )
 
             # Early stop if converged
             if converged:
