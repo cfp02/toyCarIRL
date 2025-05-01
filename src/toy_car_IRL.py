@@ -1,6 +1,9 @@
 import argparse
 import logging
 import os
+from tqdm import tqdm
+import json
+from pathlib import Path
 
 import numpy as np
 from cvxopt import (
@@ -82,7 +85,7 @@ class irlAgent:
             env_weights=W,
             env_path=self.track_file,
             num_episodes=self.num_frames // 100,
-            max_steps_per_episode=250,
+            max_steps_per_episode=500,
             checkpoint_dir=checkpoint_dir,
             log_dir=f"{save_dir}/logs_{i}",
             tracker=self.tracker,  # Pass the tracker object
@@ -125,7 +128,7 @@ class irlAgent:
                 save_dir, f"iter{i}_track-{track_name}_frame-{self.num_frames}.pt"
             )
             self.best_t_value = hyperDistance
-            print(
+            tqdm.write(
                 f"New best model: {self.best_model_path} with distance: {hyperDistance}"
             )
 
@@ -254,32 +257,31 @@ if __name__ == "__main__":
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
 
-    randomPolicyFE = [
-        3.90000000e-01,
-        1.50000000e-01,
-        3.80000000e-01,
-        2.00000000e-01,
-        2.50000000e-01,
-        3.00000000e-01,
-        3.50000000e-01,
-        4.00000000e-01,
-        2.00000000e-01,
-        1.00000000e-01,
-    ]
+    # Generate random feature expectations for random policy
+    np.random.seed(42)  # For reproducibility
+    randomPolicyFE = np.random.uniform(0.1, 0.6, size=NUM_STATES).tolist()
+    print("Random Policy FE:", randomPolicyFE)
 
     # Change this based on demonstration FE
-    expertPolicy = [
-        1.72849219e-01,
-        7.87486915e-01,
-        8.62962472e-01,
-        2.39732714e-01,
-        7.60214094e-01,
-        9.68773805e-08,
-        2.64416711e-05,
-        2.66536551e-05,
-        1.00000000e00,
-        8.52654902e-01,
-    ]
+    # Load expert feature expectations from a JSON file
+
+    # Define path to the expert demonstration file
+    track_name = os.path.basename(track_file)
+    if track_name.endswith(".json"):
+        track_name = track_name[:-5]  # Remove .json extension
+    DATA_DIR = Path("demonstrations")
+    behavior_str = BEHAVIOR if BEHAVIOR else "custom"
+    demo_file = str(DATA_DIR / f"{behavior_str}_{track_name}_demo.json")
+
+    try:
+        with open(demo_file, "r") as f:
+            demo_data = json.load(f)
+            expertPolicy = demo_data.get("feature_expectations", [])
+            print(f"Loaded expert policy from {demo_file}")
+            print(f"Expert Policy FE: {expertPolicy}")
+    except FileNotFoundError:
+        print(f"Warning: Demo file {demo_file} not found, RANDOM POLICY BEING USED")
+        expertPolicy = randomPolicyFE
 
     epsilon = 0.1
 

@@ -204,20 +204,12 @@ class GameState:
         # Ensure car doesn't go out of bounds
         self.check_bounds()
 
-        # Calculate base reward from features
-        base_reward = np.dot(self.W, readings)
-
-        # Add collision penalty to reward
-        collision_penalty = 0
-        if self.crashed and not self.was_crashed_last_frame:
-            # Only apply penalty on new crashes
-            collision_penalty = -10.0  # Significant penalty for each collision
+        # Calculate reward from features
+        reward = np.dot(self.W, readings)
 
         # Store crash state for next frame
         self.was_crashed_last_frame = self.crashed
 
-        # Combined reward
-        reward = base_reward + collision_penalty
         state = np.array([readings])
 
         self.num_steps += 1

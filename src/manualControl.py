@@ -147,8 +147,8 @@ class TrajectoryRecorder:
 
 
 def play_and_record(
-    obstacle_file: Optional[str] = None,
-    output_file: Optional[str] = None,
+    track_file: str,
+    behavior: Optional[str] = "Custom",
     fps: int = DEFAULT_FPS,
 ) -> None:
     """
@@ -156,7 +156,7 @@ def play_and_record(
 
     Args:
         obstacle_file: Path to obstacle configuration file
-        output_file: Path to save the trajectory data
+        behavior: name of behavior demonstration
         fps: Frames per second for game display
 
     Returns:
@@ -166,8 +166,8 @@ def play_and_record(
     weights = [1.0] * NUM_STATES
     game_state = (
         carmunk.GameState(weights)
-        if obstacle_file is None
-        else carmunk.GameState(weights, obstacle_file)
+        if track_file is None
+        else carmunk.GameState(weights, track_file)
     )
 
     recorder = TrajectoryRecorder(weights)
@@ -263,15 +263,14 @@ def play_and_record(
         print("]")
         print("====================================")
 
-        if output_file is None:
-            DATA_DIR.mkdir(exist_ok=True)
-            track_name = (
-                os.path.splitext(os.path.basename(obstacle_file))[0]
-                if obstacle_file
-                else "default"
-            )
-            timestamp = time.strftime("%Y%m%d_%H%M%S")
-            output_file = str(DATA_DIR / f"trajectory_{track_name}_{timestamp}.json")
+        DATA_DIR.mkdir(exist_ok=True)
+        track_name = os.path.basename(track_file)
+        if track_name.endswith(".json"):
+            track_name = track_name[:-5]  # Remove .json extension
+
+        # Create output filename
+        behavior_str = behavior if behavior else "custom"
+        output_file = str(DATA_DIR / f"{behavior_str}_{track_name}_demo.json")
 
         # Save trajectory
         recorder.save_trajectory(output_file)
@@ -293,11 +292,11 @@ if __name__ == "__main__":
         help="Path or name of obstacle configuration file (default: tracks/default.json)",
     )
     parser.add_argument(
-        "--output",
-        "-o",
+        "--behavior",
+        "-b",
         type=str,
         default=None,
-        help="Path to save the trajectory data (default: demonstrations/trajectory_<track>_<timestamp>.json)",
+        help="Behavior name for saving the trajectory data (default: demonstrations/<behavior>_<track_file>_demo.json)",
     )
     parser.add_argument(
         "--fps",
@@ -309,20 +308,22 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # Resolve track path if provided
-    obstacle_file = None
+    track_file = "tracks/default.json"
     if args.track:
         # Try to locate the track file
         if os.path.isfile(args.track):
-            obstacle_file = args.track
+            track_file = args.track
         elif os.path.isfile(f"tracks/{args.track}"):
-            obstacle_file = f"tracks/{args.track}"
+            track_file = f"tracks/{args.track}"
         elif os.path.isfile(f"tracks/{args.track}.json"):
-            obstacle_file = f"tracks/{args.track}.json"
-        if not obstacle_file:
+            track_file = f"tracks/{args.track}.json"
+        if not track_file:
             print(f"Warning: Could not find track file at {args.track}")
             print("Using default track instead.")
 
     # Play and record trajectory
     trajectory_data = play_and_record(
-        obstacle_file=obstacle_file, output_file=args.output, fps=args.fps
+        track_file=track_file,
+        behavior=args.behavior,
+        fps=args.fps,
     )

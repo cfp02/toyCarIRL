@@ -57,7 +57,7 @@ def train(
     from collections import deque
 
     # Conditons for early stopping
-    early_stop_window = 40
+    early_stop_window = 100
     recent_rewards = deque(maxlen=early_stop_window)
 
     # Define a frequency for updating the tracker during training
@@ -122,19 +122,19 @@ def train(
 
             # Log convergence info periodically
             if (episode + 1) % log_interval == 0:
-                print(
+                tqdm.write(
                     f"Convergence: mean={mean_reward:.1f}, std={std_reward:.1f}, "
                     f"stability_ratio={std_reward / abs(mean_reward):.3f} (target ≤ 0.1), converged={converged}"
                 )
 
             # Early stop if converged
             if converged:
-                print(
+                tqdm.write(
                     f"\n✅ Early stopping: Agent converged with stable rewards "
                     f"(mean={mean_reward:.1f}, std={std_reward:.1f})"
                 )
-            agent.save(os.path.join(checkpoint_dir, "converged_model.pth"))
-            break
+                agent.save(os.path.join(checkpoint_dir, "converged_model.pth"))
+                break
 
         # Track rewards and losses
         all_rewards.append(episode_reward)
@@ -188,7 +188,7 @@ def train(
         if (episode + 1) % log_interval == 0:
             avg_reward = np.mean(all_rewards[-log_interval:])
             avg_length = np.mean(all_lengths[-log_interval:])
-            print(
+            tqdm.write(
                 f"Episode {episode + 1}/{num_episodes} | "
                 f"Avg Reward: {avg_reward:.2f} | "
                 f"Avg Length: {avg_length:.2f} | "
