@@ -11,7 +11,7 @@ import numpy as np
 from flat_game import carmunk
 from nn import DQNAgent
 
-NUM_STATES = 10
+NUM_STATES = 9
 GAMMA = 0.9
 
 
@@ -20,7 +20,7 @@ def play(agent, weights, track_file="tracks/default.json"):
     print(f"Playing with track file: {track_file}")
     game_state = carmunk.GameState(weights, track_file)
 
-    _, state, __, ___ = game_state.frame_step((2))
+    _, state, __, ___, done = game_state.frame_step((2))
 
     featureExpectations = np.zeros(len(weights))
 
@@ -32,17 +32,14 @@ def play(agent, weights, track_file="tracks/default.json"):
         action = agent.act(state, evaluate=True)
 
         # Take action.
-        _, state, readings, collision_count = game_state.frame_step(int(action))
+        _, state, readings, collision_count, done = game_state.frame_step(int(action))
 
         # Start recording feature expectations only after 100 frames
         if car_distance > 100:
             featureExpectations += (GAMMA ** (car_distance - 101)) * np.array(readings)
 
         # Tell us something and break after a certain distance
-        if car_distance % 2000 == 0:
-            print(
-                f"Current distance: {car_distance} frames. Collisions: {collision_count}"
-            )
+        if done:
             break
 
     return featureExpectations

@@ -10,6 +10,8 @@ from tqdm import tqdm
 from flat_game import carmunk
 from nn import DQNAgent
 
+MAX_EPISODE_LENGTH = 500
+
 
 def train(
     agent: DQNAgent,
@@ -66,9 +68,8 @@ def train(
     )  # Update ~20 times during training
 
     for episode in progress_bar:
-        # Reset environment
         action = 2
-        _, state, _, _ = env.frame_step(action)
+        _, state, _, _, done = env.frame_step(action)
         state = state.reshape(-1)
 
         episode_reward = 0
@@ -78,13 +79,10 @@ def train(
         while steps < max_steps_per_episode:
             # Select action
             action = agent.act(state)
-            reward, next_state, _, _ = env.frame_step(action)
+            reward, next_state, _, _, done = env.frame_step(action)
             next_state = next_state.reshape(-1)
 
             # Store transition in memory
-            # Check if we're near the end of the episode
-            done = (max_steps_per_episode - steps) <= 2
-
             agent.memorize(state, action, reward, next_state, done)
 
             # Move to the next state
@@ -101,6 +99,8 @@ def train(
             episode_reward += reward
             steps += 1
             total_frames += 1
+            if done:
+                env.reset_car()
 
         recent_rewards.append(episode_reward)
 
@@ -112,9 +112,9 @@ def train(
 
             # Focus on stability - reward should be relatively the same for the window
             reward_stable = (
-                std_reward <= (0.1 * abs(mean_reward))
+                std_reward <= (0.25 * abs(mean_reward))
                 if mean_reward != 0
-                else std_reward <= 1.0
+                else std_reward <= 2.5
             )
 
             # Determine if we should stop - only based on stability
@@ -216,7 +216,9 @@ def train(
             if avg_reward > best_reward:
                 best_reward = avg_reward
                 agent.save(os.path.join(checkpoint_dir, "best_model.pth"))
-                print(f"New best model saved with average reward: {best_reward:.2f}")
+                tqdm.write(
+                    f"New best model saved with average reward: {best_reward:.2f}"
+                )
 
     # Final save
     agent.save(os.path.join(checkpoint_dir, "final_model.pth"))
@@ -243,27 +245,26 @@ def evaluate(
     lengths = []
 
     for episode in range(num_episodes):
-        # Reset environment
+        env.reset_car
         action = 2
-        _, state, _, collisions = env.frame_step(action)
+        _, state, _, collisions, done = env.frame_step(action)
         state = state.reshape(-1)
 
         episode_reward = 0
         steps = 0
-
-        while collisions <= 5:  # allow some collisons to learn recovery behavior
+        while steps < MAX_EPISODE_LENGTH:
             # Select action without exploration
             action = agent.act(state, evaluate=True)
-            reward, next_state, _, next_collisions = env.frame_step(action)
+            reward, next_state, _, next_collisions, done = env.frame_step(action)
             next_state = next_state.reshape(-1)  # Flatten
-
-            collisions = next_collisions
 
             # Move to the next state
             state = next_state
 
             episode_reward += reward
             steps += 1
+            if done:
+                env.reset_car()
 
         rewards.append(episode_reward)
         lengths.append(steps)
@@ -308,7 +309,7 @@ def parse_args():
         "--buffer-size", type=int, default=100000, help="Replay buffer size"
     )
     parser.add_argument(
-        "--batch-size", type=int, default=64, help="Batch size for training"
+        "--batch-size", type=int, default=128, help="Batch size for training"
     )
     parser.add_argument(
         "--target-update",

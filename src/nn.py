@@ -28,6 +28,7 @@ class DQN(nn.Module):
         for hidden_size in hidden_sizes:
             layers.append(nn.Linear(prev_size, hidden_size))
             layers.append(nn.ReLU())
+            layers.append(nn.BatchNorm1d(hidden_size))  # Add batch normalization
             prev_size = hidden_size
 
         layers.append(nn.Linear(prev_size, output_size))
@@ -38,33 +39,54 @@ class DQN(nn.Module):
         return self.network(x)
 
 
-class ReplayBuffer:
-    """Standard experience replay buffer"""
-
-    def __init__(self, capacity: int):
+class PrioritizedReplayBuffer:
+    def __init__(self, capacity, alpha=0.6, beta_start=0.4, beta_frames=100000):
         self.buffer = deque(maxlen=capacity)
+        self.priorities = deque(maxlen=capacity)
+        self.alpha = alpha  # How much prioritization to use (0 = none, 1 = full)
+        self.beta = beta_start  # Importance sampling correction
+        self.beta_frames = beta_frames  # Frames over which to anneal beta to 1
+        self.frame = 1  # Current frame counter
+        self.epsilon = 1e-6  # Small positive constant to prevent zero priority
 
     def add(self, state, action, reward, next_state, done):
-        """Add experience to buffer"""
+        # Add with max priority when new experience comes in
+        max_priority = max(self.priorities) if self.priorities else 1.0
         self.buffer.append((state, action, reward, next_state, done))
+        self.priorities.append(max_priority)
 
-    def sample(self, batch_size: int):
-        """Sample random batch from buffer"""
-        batch = random.sample(self.buffer, batch_size)
-        states, actions, rewards, next_states, dones = zip(*batch)
+    def sample(self, batch_size):
+        # Calculate sampling probabilities
+        priorities = np.array(self.priorities)
+        probs = priorities * self.alpha
+        probs /= probs.sum()
 
+        # Sample indices based on probabilities
+        indices = np.random.choice(len(self.buffer), batch_size, p=probs)
+        samples = [self.buffer[idx] for idx in indices]
+
+        # Calculate importance sampling weights
+        self.beta = min(1.0, self.beta + self.frame / self.beta_frames)
+        self.frame += 1
+
+        # Calculate weights
+        weights = (len(self.buffer) * probs[indices]) ** (-self.beta)
+        weights /= weights.max()  # Normalize
+
+        states, actions, rewards, next_states, dones = zip(*samples)
         return (
             torch.tensor(np.array(states), dtype=torch.float32).to(device),
             torch.tensor(np.array(actions), dtype=torch.int64).to(device),
             torch.tensor(np.array(rewards), dtype=torch.float32).to(device),
             torch.tensor(np.array(next_states), dtype=torch.float32).to(device),
             torch.tensor(np.array(dones), dtype=torch.float32).to(device),
-            torch.ones(batch_size).to(device),  # Uniform weights
-            None,
+            torch.tensor(weights, dtype=torch.float32).to(device),
+            indices,
         )
 
     def update_priorities(self, indices, errors):
-        pass
+        for idx, error in zip(indices, errors):
+            self.priorities[idx] = error + self.epsilon
 
     def __len__(self):
         return len(self.buffer)
@@ -76,7 +98,7 @@ class DQNAgent:
         state_size: int,
         action_size: int,
         hidden_sizes: List[int],
-        learning_rate: float = 1e-3,
+        learning_rate: float = 2e-4,
         gamma: float = 0.99,
         epsilon_start: float = 1.0,
         epsilon_end: float = 0.1,
@@ -84,7 +106,7 @@ class DQNAgent:
         buffer_size: int = 100000,
         batch_size: int = 64,
         target_update_freq: int = 1000,
-        use_dueling_dqn: bool = False,
+        use_dueling_dqn: bool = True,
         reward_scaling: float = 1.0,
     ):
         self.state_size = state_size
@@ -110,7 +132,7 @@ class DQNAgent:
         self.criterion = nn.MSELoss(reduction="none")
 
         # Initialize replay buffer
-        self.memory = ReplayBuffer(buffer_size)
+        self.memory = PrioritizedReplayBuffer(buffer_size)
 
         self.training_steps = 0
 
@@ -174,9 +196,14 @@ class DQNAgent:
         if not evaluate and random.random() < self.epsilon:
             return random.randrange(self.action_size)
 
+        self.policy_net.eval()
+
         state = torch.FloatTensor(state).unsqueeze(0).to(device)
         with torch.no_grad():
             q_values = self.policy_net(state)
+
+        if not evaluate:
+            self.policy_net.train()
         return q_values.argmax().item()
 
     def update_epsilon(self, frame):
@@ -187,6 +214,15 @@ class DQNAgent:
     def memorize(self, state, action, reward, next_state, done):
         reward = reward * self.reward_scaling
         self.memory.add(state, action, reward, next_state, done)
+
+    def update_target_network(self):
+        tau = 0.05  # Soft update parameter
+        for target_param, local_param in zip(
+            self.target_net.parameters(), self.policy_net.parameters()
+        ):
+            target_param.data.copy_(
+                tau * local_param.data + (1.0 - tau) * target_param.data
+            )
 
     def learn(self):
         if len(self.memory) < self.batch_size:
@@ -217,14 +253,11 @@ class DQNAgent:
         # Optimize the model
         self.optimizer.zero_grad()
         weighted_loss.backward()
-        torch.nn.utils.clip_grad_norm_(
-            self.policy_net.parameters(), 1.0
-        )  # Gradient clipping
+        torch.nn.utils.clip_grad_norm_(self.policy_net.parameters(), max_norm=1.0)
         self.optimizer.step()
 
         # Update target network
         self.training_steps += 1
-        if self.training_steps % self.target_update_freq == 0:
-            self.target_net.load_state_dict(self.policy_net.state_dict())
+        self.update_target_network()
 
         return loss.mean().item()

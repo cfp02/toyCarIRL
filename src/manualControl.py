@@ -8,9 +8,10 @@ Controls:
 - LEFT ARROW: Turn left
 - RIGHT ARROW: Turn right
 - UP ARROW: Move forward (default)
-- DOWN ARROW: Exit and save trajectory
+- DOWN ARROW: Exit current episode
+- ESC: Stop recording episodes and save aggregated data
 
-Always exit using the DOWN ARROW key rather than Ctrl+C to ensure proper cleanup.
+Always exit using the ESC key rather than Ctrl+C to ensure proper cleanup.
 """
 
 import argparse
@@ -18,7 +19,7 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 import numpy as np
 import pygame
@@ -26,10 +27,11 @@ from tqdm import tqdm
 
 from flat_game import carmunk
 
-NUM_STATES = 10
+NUM_STATES = 9
 GAMMA = 0.9  # Discount factor
-DEFAULT_FPS = 10
-MAX_EPISODE_LENGTH = 5000
+DEFAULT_FPS = 9
+MAX_EPISODE_LENGTH = 500
+DEFAULT_NUM_EPISODES = 5
 DATA_DIR = Path("demonstrations")
 
 
@@ -48,6 +50,11 @@ class TrajectoryRecorder:
         self.feature_dim = len(weights)
         self.gamma = gamma
         self.reset()
+
+        # Multi-episode tracking
+        self.all_episodes = []
+        self.combined_feature_expectations = np.zeros(self.feature_dim)
+        self.episode_count = 0
 
     def reset(self) -> None:
         """Reset the recorder for a new trajectory."""
@@ -116,14 +123,28 @@ class TrajectoryRecorder:
         """Update previous feature expectations for change calculation."""
         self.prev_feature_expectations = np.array(self.feature_expectations)
 
-    def save_trajectory(self, filepath: str) -> None:
+    def complete_episode(self) -> Dict:
         """
-        Save the collected trajectory to a file.
+        Complete the current episode and return the trajectory data.
 
-        Args:
-            filepath: Path to save the trajectory data
+        Returns:
+            Dict containing the episode trajectory data
         """
-        trajectory_data = {
+        # Calculate normalized feature expectations for this episode
+        if self.step_count > 100:
+            # Normalize FE to be length-independent
+            recorded_steps = self.step_count - 100
+            norm_factor = (
+                (1 - self.gamma) / (1 - self.gamma**recorded_steps)
+                if recorded_steps > 0
+                else 1
+            )
+            episode_fe = self.feature_expectations * norm_factor
+        else:
+            episode_fe = np.zeros(self.feature_dim)
+
+        # Create episode data dictionary
+        episode_data = {
             "states": [
                 s.tolist() if isinstance(s, np.ndarray) else s for s in self.states
             ],
@@ -131,36 +152,80 @@ class TrajectoryRecorder:
             "rewards": self.rewards,
             "features": self.features,
             "collisions": self.collisions,
-            "feature_expectations": self.feature_expectations.tolist(),
+            "ep_feature_expectations": episode_fe.tolist(),
             "metadata": {
+                "episode_number": self.episode_count + 1,
                 "length": self.step_count,
                 "total_collisions": self.current_collision_count,
                 "gamma": self.gamma,
                 "timestamp": time.strftime("%Y%m%d_%H%M%S"),
             },
         }
+
+        # Add to our collection of episodes
+        self.all_episodes.append(episode_data)
+
+        # Update combined feature expectations (we'll average at the end)
+        self.combined_feature_expectations += episode_fe
+        self.episode_count += 1
+
+        return episode_data
+
+    def save_all_trajectories(self, filepath: str) -> None:
+        """
+        Save all collected trajectories and average feature expectations.
+
+        Args:
+            filepath: Path to save the trajectory data
+        """
+        if self.episode_count == 0:
+            print("No episodes recorded.")
+            return
+
+        # Calculate average feature expectations
+        avg_fe = self.combined_feature_expectations / self.episode_count
+
+        # Create aggregate data
+        all_trajectory_data = {
+            "episodes": self.all_episodes,
+            "feature_expectations": avg_fe.tolist(),
+            "metadata": {
+                "total_episodes": self.episode_count,
+                "gamma": self.gamma,
+                "timestamp": time.strftime("%Y%m%d_%H%M%S"),
+            },
+        }
+
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         with open(filepath, "w") as f:
-            json.dump(trajectory_data, f, indent=2)
+            json.dump(all_trajectory_data, f, indent=2)
 
-        print(f"Trajectory saved to {filepath}")
+        print(f"\nAll trajectories saved to {filepath}")
+
+        # Also print the average feature expectations for easy copying
+        print("\n=== Average Feature Expectations ===")
+        print("[")
+        for i, fe in enumerate(avg_fe):
+            end_char = "," if i < len(avg_fe) - 1 else ""
+            print(f"    {fe:.8e}{end_char}")
+        print("]")
+        print("====================================")
 
 
 def play_and_record(
     track_file: str,
     behavior: Optional[str] = "Custom",
     fps: int = DEFAULT_FPS,
+    num_episodes: int = DEFAULT_NUM_EPISODES,
 ) -> None:
     """
-    Play the game with manual control and record expert trajectory.
+    Play the game with manual control and record expert trajectory across multiple episodes.
 
     Args:
-        obstacle_file: Path to obstacle configuration file
+        track_file: Path to obstacle configuration file
         behavior: name of behavior demonstration
         fps: Frames per second for game display
-
-    Returns:
-        Trajectory data dictionary
+        num_episodes: Number of episodes to record
     """
     # Initialize weights to all 1.0
     weights = [1.0] * NUM_STATES
@@ -171,17 +236,7 @@ def play_and_record(
     )
 
     recorder = TrajectoryRecorder(weights)
-    reward, state, features, collision_count = game_state.frame_step(
-        2
-    )  # Start with forward motion
-
     clock = pygame.time.Clock()
-    progress = tqdm(
-        total=MAX_EPISODE_LENGTH,
-        desc="Recording trajectory",
-        unit="steps",
-        dynamic_ncols=True,
-    )
 
     # Print instructions
     print("\n--- Manual Control for Expert Demonstrations ---")
@@ -189,100 +244,123 @@ def play_and_record(
     print("  LEFT: Turn left")
     print("  RIGHT: Turn right")
     print("  UP: Move forward (default)")
-    print("  DOWN: Exit and save trajectory")
-    print(f"Recording at {fps} FPS. Max episode length: {MAX_EPISODE_LENGTH} steps.\n")
+    print("  DOWN: Exit current episode")
+    print("  ESC: Stop recording episodes and save aggregated data")
+    print(f"Recording at {fps} FPS. Max episode length: {MAX_EPISODE_LENGTH} steps.")
+    print(f"Target number of episodes: {num_episodes}\n")
 
-    # Main game loop
-    try:
-        running = True
-        action = 2  # Default action is forward
-        while running and recorder.step_count < MAX_EPISODE_LENGTH:
-            # Handle pygame events
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    running = False
-                elif event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_LEFT:
-                        action = 1
-                    elif event.key == pygame.K_RIGHT:
-                        action = 0
-                    elif event.key == pygame.K_UP:
-                        action = 2
-                    elif event.key == pygame.K_DOWN:
+    # Main loop for multiple episodes
+    stop_all_recording = False
+    completed_episodes = 0
+
+    while completed_episodes < num_episodes and not stop_all_recording:
+        # Reset for new episode
+        recorder.reset()
+        game_state.reset_car()
+        reward, state, features, collision_count, done = game_state.frame_step(
+            2
+        )  # Start with forward
+
+        print(f"\nStarting Episode {completed_episodes + 1}/{num_episodes}")
+
+        progress = tqdm(
+            total=MAX_EPISODE_LENGTH,
+            desc=f"Episode {completed_episodes + 1}/{num_episodes}",
+            unit="steps",
+            dynamic_ncols=True,
+        )
+
+        # Episode game loop
+        try:
+            running = True
+            action = 2  # Default action is forward
+            while running and recorder.step_count < MAX_EPISODE_LENGTH:
+                # Handle pygame events
+                for event in pygame.event.get():
+                    if event.type == pygame.QUIT:
                         running = False
-                        break
-                elif event.type == pygame.KEYUP:
-                    # When key is released, go back to forward motion
-                    if event.key in [pygame.K_LEFT, pygame.K_RIGHT]:
-                        action = 2
+                        stop_all_recording = True
+                    elif event.type == pygame.KEYDOWN:
+                        if event.key == pygame.K_LEFT:
+                            action = 1
+                        elif event.key == pygame.K_RIGHT:
+                            action = 0
+                        elif event.key == pygame.K_UP:
+                            action = 2
+                        elif event.key == pygame.K_DOWN:
+                            running = False  # End this episode
+                        elif event.key == pygame.K_ESCAPE:
+                            running = False
+                            stop_all_recording = True  # End all recording
+                    elif event.type == pygame.KEYUP:
+                        # When key is released, go back to forward motion
+                        if event.key in [pygame.K_LEFT, pygame.K_RIGHT]:
+                            action = 2
 
-            # Take action in environment - FIX: Unpack 4 values instead of 3
-            reward, new_state, features, collision_count = game_state.frame_step(action)
-
-            # Record step
-            recorder.record_step(state, action, reward, features, collision_count)
-            state = new_state
-
-            # Update progress bar every 10 steps
-            if recorder.step_count % 10 == 0:
-                progress.n = recorder.step_count
-                progress.update(0)
-                progress.set_postfix(
-                    {
-                        "change": f"{recorder.get_change_percentage():.2f}%",
-                        "collisions": collision_count,
-                    }
+                # Take action in environment
+                reward, new_state, features, collision_count, done = (
+                    game_state.frame_step(action)
                 )
 
-            # Calculate and display feature expectation changes periodically
-            if recorder.step_count % 100 == 0:
-                recorder.get_change_percentage()
-                recorder.update_prev_expectations()
+                # Record step
+                recorder.record_step(state, action, reward, features, collision_count)
+                state = new_state
 
-            # Control frame rate
-            clock.tick(fps)
-    finally:
-        progress.close()
+                # Update progress bar every 10 steps
+                if recorder.step_count % 10 == 0:
+                    progress.n = recorder.step_count
+                    progress.update(0)
+                    progress.set_postfix(
+                        {
+                            "change": f"{recorder.get_change_percentage():.2f}%",
+                            "collisions": collision_count,
+                        }
+                    )
 
-        # Calculate feature expectations
-        if recorder.step_count > 100:
-            # Normalize FE to be length-independent
-            recorded_steps = recorder.step_count - 100
-            norm_factor = (
-                (1 - GAMMA) / (1 - GAMMA**recorded_steps) if recorded_steps > 0 else 1
-            )
-            feature_expectations = recorder.feature_expectations * norm_factor
-        else:
-            feature_expectations = np.zeros(recorder.feature_dim)
+                # Calculate and display feature expectation changes periodically
+                if recorder.step_count % 100 == 0:
+                    recorder.get_change_percentage()
+                    recorder.update_prev_expectations()
 
-        print("\n=== Feature Expectations for IRL ===")
-        print("[")
-        for i, fe in enumerate(feature_expectations):
-            end_char = "," if i < len(feature_expectations) - 1 else ""
-            print(f"    {fe:.8e}{end_char}")
-        print("]")
-        print("====================================")
+                # Control frame rate
+                clock.tick(fps)
 
-        DATA_DIR.mkdir(exist_ok=True)
-        track_name = os.path.basename(track_file)
-        if track_name.endswith(".json"):
-            track_name = track_name[:-5]  # Remove .json extension
+                if done:
+                    break
 
-        # Create output filename
-        behavior_str = behavior if behavior else "custom"
-        output_file = str(DATA_DIR / f"{behavior_str}_{track_name}_demo.json")
+        finally:
+            progress.close()
 
-        # Save trajectory
-        recorder.save_trajectory(output_file)
+            # Complete the episode
+            if recorder.step_count > 0:
+                recorder.complete_episode()
+                completed_episodes += 1
+                print(
+                    f"\nEpisode {completed_episodes} completed with {recorder.step_count} steps"
+                )
+                print(f"Collisions this episode: {recorder.current_collision_count}")
 
-        print(f"\nRecorded {recorder.step_count} steps")
-        print(f"Total collisions: {recorder.current_collision_count}")
+    # Save all trajectories
+    DATA_DIR.mkdir(exist_ok=True)
+    track_name = os.path.basename(track_file)
+    if track_name.endswith(".json"):
+        track_name = track_name[:-5]  # Remove .json extension
+
+    # Create output filename
+    behavior_str = behavior if behavior else "custom"
+    output_file = str(DATA_DIR / f"{behavior_str}_{track_name}_demo.json")
+
+    # Save trajectories
+    recorder.save_all_trajectories(output_file)
+
+    print(f"\nRecorded {completed_episodes} episodes")
+    print("Average feature expectations saved for expert policy")
 
 
 if __name__ == "__main__":
     # Parse command line arguments
     parser = argparse.ArgumentParser(
-        description="Manually control the car and record expert trajectories for IRL/RL."
+        description="Manually control the car and record expert trajectories for IRL/RL across multiple episodes."
     )
     parser.add_argument(
         "--track",
@@ -296,7 +374,7 @@ if __name__ == "__main__":
         "-b",
         type=str,
         default=None,
-        help="Behavior name for saving the trajectory data (default: demonstrations/<behavior>_<track_file>_demo.json)",
+        help="Behavior name for saving the trajectory data",
     )
     parser.add_argument(
         "--fps",
@@ -304,6 +382,13 @@ if __name__ == "__main__":
         type=int,
         default=DEFAULT_FPS,
         help=f"Frames per second for game display (default: {DEFAULT_FPS})",
+    )
+    parser.add_argument(
+        "--episodes",
+        "-e",
+        type=int,
+        default=DEFAULT_NUM_EPISODES,
+        help=f"Number of episodes to record (default: {DEFAULT_NUM_EPISODES})",
     )
     args = parser.parse_args()
 
@@ -322,8 +407,9 @@ if __name__ == "__main__":
             print("Using default track instead.")
 
     # Play and record trajectory
-    trajectory_data = play_and_record(
+    play_and_record(
         track_file=track_file,
         behavior=args.behavior,
         fps=args.fps,
+        num_episodes=args.episodes,
     )

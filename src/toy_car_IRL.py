@@ -18,7 +18,7 @@ from playing import (
 from train import train as IRL_helper
 from metrics import IRLTracker
 
-NUM_STATES = 10
+NUM_STATES = 9
 
 
 class irlAgent:

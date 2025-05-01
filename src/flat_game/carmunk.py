@@ -10,6 +10,12 @@ from pygame.color import THECOLORS
 from pymunk.pygame_util import DrawOptions
 from pymunk.vec2d import Vec2d
 
+pygame.font.init()  # Initialize the font module
+info_font = pygame.font.SysFont("Arial", 20)  # Create a font for displaying info
+
+
+MAX_EPISODE_LENGTH = 500
+
 # PyGame init
 width = 1000
 height = 700
@@ -73,7 +79,12 @@ class GameState:
                 car_config = config.get(
                     "car_start", {"x": 150, "y": 20, "r": 15, "angle": 1.4}
                 )
-                self.create_car(car_config["x"], car_config["y"], car_config["r"])
+                self.create_car(
+                    car_config["x"],
+                    car_config["y"],
+                    car_config["r"],
+                    car_config["angle"],
+                )
                 self.car_body.angle = car_config.get("angle", 1.4)
 
                 # Load walls
@@ -96,7 +107,7 @@ class GameState:
                 print(f"Error loading obstacle file: {e}")
         else:
             # If no file, create default setup
-            self.create_car(150, 20, 15)
+            self.create_car(150, 20, 15, 0)
             self.create_boundary_walls()
 
     def create_boundary_walls(self):
@@ -140,16 +151,19 @@ class GameState:
         self.cat_shape.collision_type = 1
         self.space.add(self.cat_body, self.cat_shape)
 
-    def create_car(self, x, y, r):
+    def create_car(self, x, y, r, angle):
         inertia = pymunk.moment_for_circle(1, 0, 14, (0, 0))
         self.car_body = pymunk.Body(1, inertia)
         self.car_body.position = x, y
+        self.initial_position = x, y
         self.car_shape = pymunk.Circle(self.car_body, r)
         self.car_shape.color = THECOLORS["green"]
         self.car_shape.elasticity = (
             1.0  # Increased bounce for better collision response
         )
-        self.car_body.angle = 1.4
+        self.car_body.angle = angle
+        self.initial_angle = 0.0
+        self.initial_angle += angle
 
         # Set collision type for car
         self.car_shape.collision_type = 2
@@ -160,6 +174,36 @@ class GameState:
 
         self.space.add(self.car_body, self.car_shape)
 
+    def reset_car(self):
+        """Reset car to starting position"""
+        # Get initial position from track file if available
+        if hasattr(self, "initial_position"):
+            x, y = self.initial_position
+            self.car_body.position = x, y
+            self.car_body.angle = self.initial_angle
+        else:
+            # Default random position
+            self.car_body.position = 150, 20
+            self.car_body.angle = self.initial_angle
+
+        # Reset velocity and angular velocity
+        self.car_body.velocity = Vec2d(0, 0)
+        self.car_body.angular_velocity = 0
+
+        # Apply initial impulse - THIS IS THE MISSING PART
+        driving_direction = Vec2d(1, 0).rotated(self.car_body.angle)
+        self.car_body.apply_impulse_at_local_point(driving_direction)
+
+        # Reset crashed and goal flags
+        self.crashed = False
+        self.goal_reached = False
+        self.was_crashed_last_frame = False
+        self.collision_count = 0
+        self.num_steps = 0  # Also reset step counter
+
+        # Clear sensor points
+        self.last_sensor_points = []
+
     def frame_step(self, action):
         if action == 0:  # Turn left.
             self.car_body.angle -= 0.3
@@ -168,6 +212,7 @@ class GameState:
 
         # Reset crash status at the start of each frame
         self.crashed = False
+        done = False
 
         # Get driving direction and apply velocity
         driving_direction = Vec2d(1, 0).rotated(self.car_body.angle)
@@ -184,7 +229,64 @@ class GameState:
         screen.fill(THECOLORS["black"])
         self.space.debug_draw(draw_options)
 
+        # Get the current location and the readings there.
+        x, y = self.car_body.position
+        readings = self.get_sonar_readings(x, y, self.car_body.angle)
+
+        # Draw on-screen indicators
         if draw_screen:
+            # Display crash status
+            crash_text = "CRASHED!" if self.crashed else "Normal"
+            crash_color = THECOLORS["red"] if self.crashed else THECOLORS["green"]
+            crash_surface = info_font.render(crash_text, True, crash_color)
+            screen.blit(crash_surface, (10, 10))
+
+            # Display collision count
+            coll_text = f"Collisions: {self.collision_count}"
+            coll_surface = info_font.render(coll_text, True, THECOLORS["white"])
+            screen.blit(coll_surface, (10, 40))
+
+            # Display sensor readings with color indicators
+            y_pos = 70
+            sensor_labels = ["Left", "Middle", "Right"]
+
+            # Show distance readings
+            for i in range(3):
+                dist_text = f"{sensor_labels[i]} sensor: {readings[i]:.2f}"
+                dist_surface = info_font.render(dist_text, True, THECOLORS["white"])
+                screen.blit(dist_surface, (10, y_pos))
+                y_pos += 25
+
+            # Show obstacle types detected
+            y_pos += 10
+            obstacles = [
+                "Black space",
+                "Yellow obstacle",
+                "Brown obstacle",
+                "Out of bounds",
+                "Red boundary",
+            ]
+            obstacle_colors = [
+                THECOLORS["gray"],
+                THECOLORS["yellow"],
+                THECOLORS["brown"],
+                THECOLORS["blue"],
+                THECOLORS["red"],
+            ]
+
+            for i in range(5):
+                count = readings[i + 3] * 3  # Convert back from normalized value
+                obs_text = f"{obstacles[i]}: {count:.1f}/3"
+                obs_surface = info_font.render(obs_text, True, obstacle_colors[i])
+                screen.blit(obs_surface, (10, y_pos))
+
+                # Draw a bar representing the normalized value
+                bar_length = int(readings[i + 3] * 100)  # Scale to pixels
+                pygame.draw.rect(
+                    screen, obstacle_colors[i], (200, y_pos + 5, bar_length, 10)
+                )
+                y_pos += 25
+
             pygame.display.flip()
         clock.tick()
 
@@ -192,20 +294,18 @@ class GameState:
         x, y = self.car_body.position
         readings = self.get_sonar_readings(x, y, self.car_body.angle)
 
-        # Check if car crashed based on sonar readings
-        if self.car_is_crashed(readings) or self.crashed:
-            self.crashed = True
-            readings.append(1)
-            # Slow down the car when crashed
-            self.car_body.velocity *= 0.5
-        else:
-            readings.append(0)
-
         # Ensure car doesn't go out of bounds
         self.check_bounds()
 
         # Calculate reward from features
         reward = np.dot(self.W, readings)
+
+        # Check if car crashed based on sonar readings
+        if self.car_is_crashed(readings) or self.crashed:
+            self.crashed = True
+            # Slow down the car when crashed
+            self.car_body.velocity *= 0.5
+            reward -= 2
 
         # Store crash state for next frame
         self.was_crashed_last_frame = self.crashed
@@ -214,8 +314,11 @@ class GameState:
 
         self.num_steps += 1
 
+        if self.num_steps >= MAX_EPISODE_LENGTH:
+            done = True
+
         # Return collision count along with other information
-        return reward, state, readings, self.collision_count
+        return reward, state, readings, self.collision_count, done
 
     def check_bounds(self):
         """Check if car has gone out of bounds and correct if needed"""
@@ -276,7 +379,7 @@ class GameState:
         obstacleType.append(self.get_arm_distance(arm_middle, x, y, angle, 0)[1])
         obstacleType.append(self.get_arm_distance(arm_right, x, y, angle, -0.75)[1])
 
-        ObstacleNumber = np.zeros(self.num_obstacles_type)
+        ObstacleNumber = np.zeros(self.num_obstacles_type, dtype=int)
 
         for i in obstacleType:
             if i == 0:
