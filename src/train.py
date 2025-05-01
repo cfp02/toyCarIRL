@@ -94,7 +94,7 @@ def train(
                 episode_loss += loss
 
             # Update epsilon
-            agent.update_epsilon(total_frames)
+            agent.update_epsilon(episode, num_episodes)
 
             episode_reward += reward
             steps += 1

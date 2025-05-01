@@ -48,6 +48,7 @@ class PrioritizedReplayBuffer:
         self.beta_frames = beta_frames  # Frames over which to anneal beta to 1
         self.frame = 1  # Current frame counter
         self.epsilon = 1e-6  # Small positive constant to prevent zero priority
+        self.segments = 8
 
     def add(self, state, action, reward, next_state, done):
         # Add with max priority when new experience comes in
@@ -56,20 +57,77 @@ class PrioritizedReplayBuffer:
         self.priorities.append(max_priority)
 
     def sample(self, batch_size):
+        if len(self.buffer) < batch_size:
+            return (
+                torch.tensor(
+                    np.array([s[0] for s in self.buffer]), dtype=torch.float32
+                ).to(device),
+                torch.tensor(
+                    np.array([s[1] for s in self.buffer]), dtype=torch.int64
+                ).to(device),
+                torch.tensor(
+                    np.array([s[2] for s in self.buffer]), dtype=torch.float32
+                ).to(device),
+                torch.tensor(
+                    np.array([s[3] for s in self.buffer]), dtype=torch.float32
+                ).to(device),
+                torch.tensor(
+                    np.array([s[4] for s in self.buffer]), dtype=torch.float32
+                ).to(device),
+                torch.tensor(np.ones(len(self.buffer)), dtype=torch.float32).to(device),
+                list(range(len(self.buffer))),
+            )
+
         # Calculate sampling probabilities
         priorities = np.array(self.priorities)
-        probs = priorities * self.alpha
+        probs = priorities**self.alpha
         probs /= probs.sum()
 
-        # Sample indices based on probabilities
-        indices = np.random.choice(len(self.buffer), batch_size, p=probs)
+        # Use stratified sampling across segments to ensure diversity
+        samples_per_segment = batch_size // self.segments
+        remainder = batch_size % self.segments
+
+        indices = []
+        segment_size = len(self.buffer) // self.segments
+
+        for i in range(self.segments):
+            # Get segment boundaries
+            start_idx = i * segment_size
+            end_idx = (
+                (i + 1) * segment_size if i < self.segments - 1 else len(self.buffer)
+            )
+
+            # Calculate segment probabilities
+            segment_probs = probs[start_idx:end_idx]
+            if segment_probs.sum() > 0:  # Avoid division by zero
+                segment_probs = segment_probs / segment_probs.sum()
+
+                # Sample from this segment
+                segment_samples = samples_per_segment + (1 if i < remainder else 0)
+                if segment_samples > 0:
+                    segment_indices = np.random.choice(
+                        np.arange(start_idx, end_idx),
+                        size=min(segment_samples, end_idx - start_idx),
+                        p=segment_probs,
+                        replace=False,
+                    )
+                    indices.extend(segment_indices)
+
+        # If we couldn't get enough samples with stratification, fill the rest randomly
+        if len(indices) < batch_size:
+            remaining = batch_size - len(indices)
+            additional_indices = np.random.choice(
+                len(self.buffer), size=remaining, p=probs, replace=False
+            )
+            indices.extend(additional_indices)
+
+        # Get samples based on indices
         samples = [self.buffer[idx] for idx in indices]
 
         # Calculate importance sampling weights
         self.beta = min(1.0, self.beta + self.frame / self.beta_frames)
         self.frame += 1
 
-        # Calculate weights
         weights = (len(self.buffer) * probs[indices]) ** (-self.beta)
         weights /= weights.max()  # Normalize
 
@@ -216,14 +274,24 @@ class DQNAgent:
 
             return action
 
-    def update_epsilon(self, frame):
-        decay_steps = 35000  # Total steps to decay over
-        # Linear interpolation between start and end
-        self.epsilon = max(
-            self.epsilon_end,
-            self.epsilon_start
-            - (self.epsilon_start - self.epsilon_end) * min(1.0, frame / decay_steps),
+    def update_epsilon(self, current_episode, total_episodes):
+        """
+        Update epsilon based on the current episode number.
+
+        Args:
+            current_episode: The current episode number
+            total_episodes: Total number of episodes for training
+        """
+        # Ensure smooth decay from start to end over the course of training
+        progress = min(1.0, current_episode / total_episodes)
+
+        # Linear interpolation between epsilon_start and epsilon_end
+        self.epsilon = self.epsilon_start - progress * (
+            self.epsilon_start - self.epsilon_end
         )
+
+        # Ensure we don't go below the minimum value
+        self.epsilon = max(self.epsilon_end, self.epsilon)
 
     def memorize(self, state, action, reward, next_state, done):
         reward = reward * self.reward_scaling
