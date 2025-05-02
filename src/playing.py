@@ -11,16 +11,20 @@ import numpy as np
 from flat_game import carmunk
 from nn import DQNAgent
 
-NUM_STATES = 10
+NUM_STATES = 16  # Updated for pushing task
 GAMMA = 0.9
 
 
-def play(agent, weights, track_file="tracks/default.json"):
+def play(agent, weights, track_file="tracks/pushing.json"):
     car_distance = 0
     print(f"Playing with track file: {track_file}")
     game_state = carmunk.GameState(weights, track_file)
+    game_state.load_environment(track_file)
+    game_state.reset()
 
+    # Get initial state
     _, state, __, ___ = game_state.frame_step((2))
+    state = state.reshape(-1)  # Ensure state is properly shaped
 
     featureExpectations = np.zeros(len(weights))
 
@@ -33,95 +37,50 @@ def play(agent, weights, track_file="tracks/default.json"):
 
         # Take action.
         _, state, readings, collision_count = game_state.frame_step(int(action))
+        state = state.reshape(-1)  # Ensure state is properly shaped
 
         # Start recording feature expectations only after 100 frames
         if car_distance > 100:
             featureExpectations += (GAMMA ** (car_distance - 101)) * np.array(readings)
 
-        # Tell us something and break after a certain distance
-        if car_distance % 2000 == 0:
+        # Check for goal reached or collision
+        if game_state.is_in_goal or collision_count > 5:
+            print(f"Episode ended: {'Goal reached' if game_state.is_in_goal else 'Collision'}")
+            break
+
+        # Tell us something every 1000 frames
+        if car_distance % 1000 == 0:
             print(
                 f"Current distance: {car_distance} frames. Collisions: {collision_count}"
             )
-            break
 
     return featureExpectations
 
 
 if __name__ == "__main__":
-    # Added default args for red model
-    parser = argparse.ArgumentParser(
-        description="Run a trained model with a specific track"
-    )
+    parser = argparse.ArgumentParser(description="Play the car environment")
     parser.add_argument(
         "--model",
-        "-m",
         type=str,
-        default="saved-models/checkpoints/best_model.pth",
-        help="Model path (default: saved-models/checkpoints/best_model.pth)",
+        required=True,
+        help="Path to the model file",
     )
     parser.add_argument(
         "--track",
-        "-t",
         type=str,
-        default="tracks/default.json",
-        help="Path to obstacle configuration file (default: tracks/default.json)",
-    )
-    parser.add_argument(
-        "--frames",
-        "-f",
-        type=int,
-        default=2000,
-        help="Number of frames to run (default: 2000)",
+        default="tracks/pushing.json",
+        help="Path to track file (default: tracks/pushing.json)",
     )
     args = parser.parse_args()
 
-    if not os.path.exists(args.model):
-        print(f"Error: Model file not found at {args.model}")
-        exit(1)
-
-    # Resolve the track file path if provided
-    track_file = "tracks/default.json"
-    if args.track:
-        potential_paths = [
-            args.track,
-            os.path.join("tracks", args.track),
-            os.path.join(
-                "tracks", f"{args.track}.json"
-            ),  # In tracks folder with .json extension
-        ]
-
-        for path in potential_paths:
-            if os.path.exists(path):
-                track_file = path
-                print(f"Using track file: {path}")
-                break
-            else:
-                print(f"Warning: Could not find track file at {args.track}")
-                print(f"Tried: {potential_paths}")
-                print("Using default track instead.")
-
-    # Model path for the PyTorch model
-    print(f"Loading model from: {args.model}")
-
-    # change this to change reward function, this should match whatever model you load. TODO: make arg
-    weights = [
-        3.96957075e-01,
-        1.60768375e-01,
-        3.85956376e-01,
-        2.17107187e-01,
-        5.31013934e-01,
-        1.89519667e-01,
-        0.00000000e00,
-        6.23592131e-02,
-        5.14246354e-01,
-        3.43368382e-02,
-    ]
+    # Initialize weights for the reward function
+    weights = [1.0] * NUM_STATES  # Equal weights for all features
 
     agent = DQNAgent(
         state_size=NUM_STATES,
         action_size=3,
         hidden_sizes=[164, 150],
+        is_pushing_task=True  # Enable pushing task mode
     )
 
     # Load the model
@@ -133,6 +92,6 @@ if __name__ == "__main__":
     agent.policy_net.eval()
 
     # Run the agent and get feature expectations
-    feature_expectations = play(agent, weights, track_file)
+    feature_expectations = play(agent, weights, args.track)
     print("Feature expectations:")
     print(feature_expectations)

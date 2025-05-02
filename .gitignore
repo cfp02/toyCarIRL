@@ -8,3 +8,7 @@ saved-models/custom_models
 saved-models/wall_models
 saved-models/saved-models_custom
 demonstrations
+logs_1
+checkpoints_1
+.DS_Store
+metrics

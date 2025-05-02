@@ -1,21 +1,28 @@
 import argparse
 import logging
 import os
+import json
+import time
+from pathlib import Path
 
 import numpy as np
+import torch
+from torch import nn, optim
 from cvxopt import (
     matrix,
     solvers,
 )
 
+from flat_game import carmunk
 from nn import DQNAgent
 from playing import (
     play,
 )
 from train import train as IRL_helper
 from metrics import IRLTracker
+from utils import TrajectoryRecorder, NUM_STATES, GAMMA
 
-NUM_STATES = 10
+NUM_STATES = 16  # Updated for pushing task
 
 
 class irlAgent:
@@ -68,6 +75,7 @@ class irlAgent:
             state_size=self.num_states,
             action_size=3,
             hidden_sizes=[164, 150],
+            is_pushing_task=True  # Enable pushing task mode
         )
 
         if self.best_model_path and os.path.exists(self.best_model_path):
@@ -75,6 +83,14 @@ class irlAgent:
             agent.load(self.best_model_path)
             # Initialize with a higher epsilon
             agent.epsilon = 0.3
+
+        # Create game state and ensure environment is loaded
+        game_state = carmunk.GameState(W, self.track_file)
+        game_state.load_environment(self.track_file)
+        game_state.reset()
+
+        # Initialize trajectory recorder
+        recorder = TrajectoryRecorder(W, self.behavior)
 
         # Train the agent with the tracker passed in for real-time updates
         rewards, losses = IRL_helper(
@@ -87,6 +103,8 @@ class irlAgent:
             log_dir=f"{save_dir}/logs_{i}",
             tracker=self.tracker,  # Pass the tracker object
             iteration=i,  # Pass the current iteration number
+            game_state=game_state,  # Pass the initialized game state
+            recorder=recorder  # Pass the trajectory recorder
         )
 
         # Save the final model
@@ -95,8 +113,8 @@ class irlAgent:
         )
         agent.save(saved_model)
 
-        # Use the trained agent to get feature expectations with the same track
-        fe = play(agent, W, self.track_file)
+        # Get feature expectations from the recorder
+        fe = recorder.feature_expectations
 
         # Calculate average metrics from training
         avg_reward = (
@@ -200,15 +218,15 @@ if __name__ == "__main__":
         "--track",
         "-t",
         type=str,
-        default="tracks/default.json",
-        help="Path to track file (default: tracks/default.json)",
+        default="tracks/pushing.json",  # Updated default track
+        help="Path to track file (default: tracks/pushing.json)",
     )
     parser.add_argument(
         "--behavior",
         "-b",
         type=str,
-        default="custom",
-        help="Behavior name (default: custom)",
+        default="pushing",  # Updated default behavior
+        help="Behavior name (default: pushing)",
     )
     parser.add_argument(
         "--frames",
@@ -244,8 +262,8 @@ if __name__ == "__main__":
                 track_file = alt_path
                 print(f"Using track file: {track_file}")
             else:
-                print("Could not find track file, using default: tracks/default.json")
-                track_file = "tracks/default.json"
+                print("Could not find track file, using default: tracks/pushing.json")
+                track_file = "tracks/pushing.json"
 
     print(f"Using track file: {track_file}")
     print(f"Behavior: {BEHAVIOR}")
@@ -254,32 +272,29 @@ if __name__ == "__main__":
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
 
-    randomPolicyFE = [
-        3.90000000e-01,
-        1.50000000e-01,
-        3.80000000e-01,
-        2.00000000e-01,
-        2.50000000e-01,
-        3.00000000e-01,
-        3.50000000e-01,
-        4.00000000e-01,
-        2.00000000e-01,
-        1.00000000e-01,
-    ]
+    # Initialize random policy feature expectations for 16 dimensions
+    randomPolicyFE = [0.1] * NUM_STATES
 
-    # Change this based on demonstration FE
-    expertPolicy = [
-        1.72849219e-01,
-        7.87486915e-01,
-        8.62962472e-01,
-        2.39732714e-01,
-        7.60214094e-01,
-        9.68773805e-08,
-        2.64416711e-05,
-        2.66536551e-05,
-        1.00000000e00,
-        8.52654902e-01,
-    ]
+    # Load demonstrations and calculate expert policy feature expectations
+    expertPolicy = [0.0] * NUM_STATES
+    demo_dir = os.path.join("demonstrations", BEHAVIOR)
+    if os.path.exists(demo_dir):
+        print(f"Loading demonstrations from {demo_dir}")
+        demo_files = [f for f in os.listdir(demo_dir) if f.endswith('.json')]
+        if demo_files:
+            print(f"Found {len(demo_files)} demonstration files")
+            for demo_file in demo_files:
+                with open(os.path.join(demo_dir, demo_file), 'r') as f:
+                    demo_data = json.load(f)
+                    if 'feature_expectations' in demo_data:
+                        expertPolicy = [x + y for x, y in zip(expertPolicy, demo_data['feature_expectations'])]
+            # Average the feature expectations
+            expertPolicy = [x / len(demo_files) for x in expertPolicy]
+            print("Expert policy feature expectations calculated from demonstrations")
+        else:
+            print("No demonstration files found, using zero initialization")
+    else:
+        print(f"Demonstration directory {demo_dir} not found, using zero initialization")
 
     epsilon = 0.1
 
@@ -287,8 +302,6 @@ if __name__ == "__main__":
     if args.continue_training:
         # Try to load convergence data
         try:
-            import json
-
             with open(f"convergence-{BEHAVIOR}.json", "r") as f:
                 convergence_data = json.load(f)
                 if convergence_data:

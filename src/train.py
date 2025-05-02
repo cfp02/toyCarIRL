@@ -6,9 +6,13 @@ from typing import List, Tuple
 import numpy as np
 from torch.utils.tensorboard.writer import SummaryWriter
 from tqdm import tqdm
+import torch
+from torch import nn, optim
 
 from flat_game import carmunk
 from nn import DQNAgent
+from metrics import IRLTracker
+from utils import TrajectoryRecorder, NUM_STATES, GAMMA
 
 
 def train(
@@ -24,6 +28,8 @@ def train(
     resume: bool = False,
     tracker=None,
     iteration=None,
+    game_state=None,
+    recorder=None,
 ) -> Tuple[List[float], List[float]]:
     # Create directories
     os.makedirs(checkpoint_dir, exist_ok=True)
@@ -51,7 +57,16 @@ def train(
     best_reward = float("-inf")
 
     print(f"Training with track file: {env_path}")
-    env = carmunk.GameState(env_weights, env_path)
+
+    # Initialize environment if not provided
+    if game_state is None:
+        game_state = carmunk.GameState(env_weights, env_path)
+        game_state.load_environment(env_path)
+        game_state.reset()
+
+    # Initialize trajectory recorder if not provided
+    if recorder is None:
+        recorder = TrajectoryRecorder(env_weights, "training")
 
     progress_bar = tqdm(range(start_episode, num_episodes), desc="Training")
     from collections import deque
@@ -65,76 +80,74 @@ def train(
         1, num_episodes // 20
     )  # Update ~20 times during training
 
-    for episode in progress_bar:
-        # Reset environment
-        action = 2
-        _, state, _, _ = env.frame_step(action)
-        state = state.reshape(-1)
+    # Initialize metrics
+    episode_rewards = []  # Track rewards for each episode
+    episode_losses = []   # Track losses for each episode
 
+    for episode in progress_bar:
+        # Reset environment and recorder
+        _, state, _, _ = game_state.frame_step(2)  # Start with forward motion
+        state = state.reshape(-1)  # Flatten the state
+        recorder.reset()
         episode_reward = 0
         episode_loss = 0
         steps = 0
 
         while steps < max_steps_per_episode:
-            # Select action
+            # Choose action
             action = agent.act(state)
-            reward, next_state, _, _ = env.frame_step(action)
-            next_state = next_state.reshape(-1)
 
-            # Store transition in memory
-            # Check if we're near the end of the episode
-            done = (max_steps_per_episode - steps) <= 2
+            # Take action
+            reward, next_state, features, collision_count = game_state.frame_step(action)
+            next_state = next_state.reshape(-1)  # Flatten the next state
+            done = game_state.is_in_goal or collision_count > 5
 
-            agent.memorize(state, action, reward, next_state, done)
-
-            # Move to the next state
-            state = next_state
-
-            # Learn
-            loss = agent.learn()
-            if loss != 0:  # Only count loss if learning happened
-                episode_loss += loss
-
-            # Update epsilon
-            agent.update_epsilon(total_frames)
-
-            episode_reward += reward
-            steps += 1
-            total_frames += 1
-
-        recent_rewards.append(episode_reward)
-
-        # Only check early stopping when we have enough data
-        if len(recent_rewards) == early_stop_window:
-            # Calculate statistics
-            mean_reward = np.mean(recent_rewards)
-            std_reward = np.std(recent_rewards)
-
-            # Focus on stability - reward should be relatively the same for the window
-            reward_stable = (
-                std_reward <= (0.1 * abs(mean_reward))
-                if mean_reward != 0
-                else std_reward <= 1.0
+            # Record step
+            recorder.record_step(
+                state, action, features, collision_count, game_state.is_in_goal
             )
 
-            # Determine if we should stop - only based on stability
-            converged = reward_stable and mean_reward > 40
+            # Store experience
+            agent.memorize(state, action, reward, next_state, done)
 
-            # Log convergence info periodically
-            if (episode + 1) % log_interval == 0:
-                print(
-                    f"Convergence: mean={mean_reward:.1f}, std={std_reward:.1f}, "
-                    f"stability_ratio={std_reward / abs(mean_reward):.3f} (target ≤ 0.1), converged={converged}"
-                )
+            # Learn from experience
+            loss = agent.learn()
+            if loss is not None:
+                episode_loss += loss
 
-            # Early stop if converged
-            if converged:
-                print(
-                    f"\n✅ Early stopping: Agent converged with stable rewards "
-                    f"(mean={mean_reward:.1f}, std={std_reward:.1f})"
-                )
-            agent.save(os.path.join(checkpoint_dir, "converged_model.pth"))
-            break
+            # Update state and metrics
+            state = next_state
+            episode_reward += reward
+            steps += 1
+
+            # Check if episode is done
+            if done:
+                break
+
+        # Update metrics
+        episode_rewards.append(episode_reward)
+        episode_losses.append(episode_loss / steps if steps > 0 else 0)
+
+        # Update tracker if provided
+        if tracker:
+            tracker.add_iteration_data(
+                iteration=iteration,
+                t_value=None,  # This will be updated by the IRL process
+                weights=env_weights,
+                fe_distances=[],  # This will be updated by the IRL process
+                best_model_path=None,  # This will be updated by the IRL process
+                avg_reward=float(episode_reward),
+                avg_loss=float(episode_loss / steps if steps > 0 else 0)
+            )
+
+        # Save checkpoint if this is the best episode so far
+        if episode_reward > best_reward and checkpoint_dir:
+            best_reward = episode_reward
+            os.makedirs(checkpoint_dir, exist_ok=True)
+            checkpoint_path = os.path.join(
+                checkpoint_dir, f"episode_{episode}_reward_{episode_reward:.2f}.pt"
+            )
+            agent.save(checkpoint_path)
 
         # Track rewards and losses
         all_rewards.append(episode_reward)
@@ -225,7 +238,7 @@ def train(
     writer.close()
 
     print("Training complete!")
-    return all_rewards, all_losses  # Return both rewards and losses
+    return episode_rewards, episode_losses  # Return both rewards and losses
 
 
 def evaluate(

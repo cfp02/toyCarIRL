@@ -589,36 +589,33 @@ class GameState:
         # Normalize angles to [-pi, pi]
         angle_to_obj = (angle_to_obj + math.pi) % (2 * math.pi) - math.pi
         
-        # Create state vector
+        # Get sonar readings
+        sonar_readings = self.get_sonar_readings(car_pos.x, car_pos.y, car_angle)
+        
+        # Create state vector (16 dimensions)
         state = np.array([
-            # Car state
-            car_pos.x / 1000.0,  # Normalize by environment width
-            car_pos.y / 700.0,   # Normalize by environment height
-            car_vel.x / 10.0,    # Normalize velocity
-            car_vel.y / 10.0,
-            car_angle / math.pi, # Normalize angle to [-1, 1]
+            # Sonar readings (8)
+            *sonar_readings,
             
-            # Object state
-            obj_pos.x / 1000.0,
-            obj_pos.y / 700.0,
-            obj_vel.x / 10.0,
-            obj_vel.y / 10.0,
-            
-            # Goal state
-            goal_pos.x / 1000.0,
-            goal_pos.y / 700.0,
-            
-            # Relative states
-            dist_to_obj / 1000.0,
+            # Object features (3)
+            dist_to_obj / 1000.0,  # Normalize by environment width
             math.sin(angle_to_obj),
             math.cos(angle_to_obj),
+            
+            # Goal features (1)
             dist_to_goal / 1000.0,
             
-            # Contact state
+            # Contact state (1)
             1.0 if self.is_pushing else 0.0,
             
-            # Collision count
-            self.collision_count / 10.0
+            # Collision count (1)
+            self.collision_count / 10.0,
+            
+            # Goal state (1)
+            1.0 if self.is_in_goal else 0.0,
+            
+            # Crashed state (1)
+            1.0 if self.crashed else 0.0
         ])
         
         return state
