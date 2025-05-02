@@ -9,13 +9,14 @@ import numpy as np
 
 
 class IRLTracker:
-    def __init__(self, behavior: str, track_file: str, num_frames: int):
+    def __init__(self, behavior: str, track_file: str, num_frames: int, run_id: str = None):
         self.behavior = behavior
         self.track_name = os.path.splitext(os.path.basename(track_file))[0]
         self.num_frames = num_frames
+        self.run_id = run_id or f"run_{int(time.time())}"
 
         # Create output directories
-        self.output_dir = os.path.join("metrics", f"{behavior}_{self.track_name}")
+        self.output_dir = os.path.join("metrics", f"{behavior}_{self.track_name}", self.run_id)
         self.plots_dir = os.path.join(self.output_dir, "plots")
         os.makedirs(self.plots_dir, exist_ok=True)
 

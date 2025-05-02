@@ -35,6 +35,7 @@ class irlAgent:
         num_frames,
         behavior,
         track_file="tracks/default.json",
+        run_id=None
     ):
         self.randomPolicy = randomFE
         self.expertPolicy = expertFE
@@ -50,9 +51,12 @@ class irlAgent:
 
         self.best_model_path = None
         self.best_t_value = float("inf")
-
-        # Initialize tracker
-        self.tracker = IRLTracker(behavior, track_file, num_frames)
+        
+        # Add run_id for multiple training runs
+        self.run_id = run_id or f"run_{int(time.time())}"
+        
+        # Initialize tracker with run_id
+        self.tracker = IRLTracker(behavior, track_file, num_frames, run_id=self.run_id)
 
         print("Expert - Random at the Start (t) :: ", self.randomT)
         self.currentT = self.randomT
@@ -65,7 +69,7 @@ class irlAgent:
         track_name = os.path.splitext(os.path.basename(self.track_file))[0]
         ITERATION = i
         save_dir = os.path.join(
-            "saved-models", f"{self.behavior}_models", "evaluatedPolicies"
+            "saved-models", f"{self.behavior}_models", self.run_id, "evaluatedPolicies"
         )
         os.makedirs(save_dir, exist_ok=True)
         checkpoint_dir = f"{save_dir}/checkpoints_{i}"
@@ -113,6 +117,12 @@ class irlAgent:
         )
         agent.save(saved_model)
 
+        # Save intermediate model
+        intermediate_model = os.path.join(
+            save_dir, f"intermediate_iter{ITERATION}.pt"
+        )
+        agent.save(intermediate_model)
+
         # Get feature expectations from the recorder
         fe = recorder.feature_expectations
 
@@ -122,10 +132,10 @@ class irlAgent:
         )
         avg_loss = np.mean(losses) if losses else 0
 
-        return fe, avg_reward, avg_loss
+        return fe, avg_reward, avg_loss, saved_model
 
     def policyListUpdater(self, W, i):
-        tempFE, avg_reward, avg_loss = self.getRLAgentFE(
+        tempFE, avg_reward, avg_loss, saved_model = self.getRLAgentFE(
             W, i
         )  # get feature expectations of a new policy respective to the input weights
         hyperDistance = np.abs(
@@ -135,13 +145,7 @@ class irlAgent:
 
         # Update best model path if this policy is better
         if hyperDistance < self.best_t_value:
-            track_name = os.path.splitext(os.path.basename(self.track_file))[0]
-            save_dir = os.path.join(
-                "saved-models", f"{self.behavior}_models", "evaluatedPolicies"
-            )
-            self.best_model_path = os.path.join(
-                save_dir, f"iter{i}_track-{track_name}_frame-{self.num_frames}.pt"
-            )
+            self.best_model_path = saved_model
             self.best_t_value = hyperDistance
             print(
                 f"New best model: {self.best_model_path} with distance: {hyperDistance}"
@@ -164,7 +168,13 @@ class irlAgent:
         return hyperDistance
 
     def optimalWeightFinder(self):
-        f = open("weights-" + self.behavior + ".txt", "w")
+        # Create a directory for this run's weights
+        weights_dir = os.path.join("weights", self.behavior, self.run_id)
+        os.makedirs(weights_dir, exist_ok=True)
+        
+        weights_file = os.path.join(weights_dir, "weights.txt")
+        f = open(weights_file, "w")
+        
         i = 1
         while True:
             W = self.optimization()
@@ -186,27 +196,56 @@ class irlAgent:
 
         return W
 
-    def optimization(
-        self,
-    ):
+    def optimization(self):
         m = len(self.expertPolicy)
-        P = matrix(2.0 * np.eye(m), tc="d")
+        
+        # Normalize feature expectations
+        expert_norm = np.linalg.norm(self.expertPolicy)
+        if expert_norm > 0:
+            normalized_expert = self.expertPolicy / expert_norm
+        else:
+            normalized_expert = self.expertPolicy
+            
+        normalized_policies = {}
+        for k, v in self.policiesFE.items():
+            policy_norm = np.linalg.norm(v)
+            if policy_norm > 0:
+                normalized_policies[k] = v / policy_norm
+            else:
+                normalized_policies[k] = v
+
+        # Add regularization to prevent numerical instability
+        P = matrix(2.0 * np.eye(m) + 0.1 * np.ones((m, m)), tc="d")
         q = matrix(np.zeros(m), tc="d")
-        policyList = [self.expertPolicy]
+        
+        policyList = [normalized_expert]
         h_list = [1]
-        for i in self.policiesFE.keys():
-            policyList.append(self.policiesFE[i])
+        
+        for i in normalized_policies.keys():
+            policyList.append(normalized_policies[i])
             h_list.append(1)
+            
         policyMat = np.matrix(policyList)
         policyMat[0] = -1 * policyMat[0]
+        
+        # Add small regularization to constraints
         G = matrix(policyMat, tc="d")
-        h = matrix(-np.array(h_list), tc="d")
-        sol = solvers.qp(P, q, G, h)
-
-        weights = np.squeeze(np.asarray(sol["x"]))
-        norm = np.linalg.norm(weights)
-        weights = weights / norm
-        return weights
+        h = matrix(-np.array(h_list) - 0.01, tc="d")
+        
+        try:
+            sol = solvers.qp(P, q, G, h)
+            if sol['status'] == 'optimal':
+                weights = np.squeeze(np.asarray(sol["x"]))
+                norm = np.linalg.norm(weights)
+                if norm > 0:
+                    weights = weights / norm
+                return weights
+            else:
+                print(f"Warning: Optimization did not converge. Status: {sol['status']}")
+                return np.ones(m) / m  # Return uniform weights as fallback
+        except Exception as e:
+            print(f"Warning: Optimization failed with error: {e}")
+            return np.ones(m) / m  # Return uniform weights as fallback
 
 
 if __name__ == "__main__":
@@ -241,12 +280,20 @@ if __name__ == "__main__":
         action="store_true",
         help="Continue from previous training run",
     )
+    parser.add_argument(
+        "--runs",
+        "-r",
+        type=int,
+        default=1,
+        help="Number of training runs to perform (default: 1)",
+    )
     args = parser.parse_args()
 
     # Update global variables from arguments
     BEHAVIOR = args.behavior
     FRAMES = args.frames
     track_file = args.track
+    num_runs = args.runs
 
     if not os.path.exists(track_file):
         print(
@@ -268,6 +315,7 @@ if __name__ == "__main__":
     print(f"Using track file: {track_file}")
     print(f"Behavior: {BEHAVIOR}")
     print(f"Training frames: {FRAMES}")
+    print(f"Number of runs: {num_runs}")
 
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
@@ -298,33 +346,39 @@ if __name__ == "__main__":
 
     epsilon = 0.1
 
-    best_model_path = None
-    if args.continue_training:
-        # Try to load convergence data
-        try:
-            with open(f"convergence-{BEHAVIOR}.json", "r") as f:
-                convergence_data = json.load(f)
-                if convergence_data:
-                    best_model = convergence_data[-1].get("best_model")
-                    if best_model and os.path.exists(best_model):
-                        best_model_path = best_model
-                        print(f"Continuing training from model: {best_model_path}")
-        except Exception as e:
-            print(f"Error loading previous convergence data: {e}")
-            print("Starting fresh training run.")
+    # Run multiple training runs
+    for run in range(num_runs):
+        print(f"\nStarting training run {run + 1}/{num_runs}")
+        run_id = f"run_{run + 1}_{int(time.time())}"
+        
+        best_model_path = None
+        if args.continue_training:
+            # Try to load convergence data
+            try:
+                with open(f"convergence-{BEHAVIOR}.json", "r") as f:
+                    convergence_data = json.load(f)
+                    if convergence_data:
+                        best_model = convergence_data[-1].get("best_model")
+                        if best_model and os.path.exists(best_model):
+                            best_model_path = best_model
+                            print(f"Continuing training from model: {best_model_path}")
+            except Exception as e:
+                print(f"Error loading previous convergence data: {e}")
+                print("Starting fresh training run.")
 
-    irlearner = irlAgent(
-        randomPolicyFE,
-        expertPolicy,
-        epsilon,
-        NUM_STATES,
-        FRAMES,
-        BEHAVIOR,
-        track_file,
-    )
+        irlearner = irlAgent(
+            randomPolicyFE,
+            expertPolicy,
+            epsilon,
+            NUM_STATES,
+            FRAMES,
+            BEHAVIOR,
+            track_file,
+            run_id=run_id
+        )
 
-    if best_model_path:
-        irlearner.best_model_path = best_model_path
+        if best_model_path:
+            irlearner.best_model_path = best_model_path
 
-    final_weights = irlearner.optimalWeightFinder()
-    print("Final optimized weights:", final_weights)
+        final_weights = irlearner.optimalWeightFinder()
+        print(f"Run {run + 1} complete. Final optimized weights:", final_weights)
