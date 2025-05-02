@@ -180,11 +180,19 @@ def play_and_record(
     """
     # Initialize weights to all 1.0
     weights = [1.0] * NUM_STATES
+
+    # Create game state
     game_state = (
         carmunk.GameState(weights)
         if track_file is None
         else carmunk.GameState(weights, track_file)
     )
+    
+    # Load the environment
+    game_state.load_environment(track_file)
+    
+    # Initialize the game state
+    game_state.reset()
 
     demo_dir = get_demo_dir(task_name)
 
@@ -284,7 +292,13 @@ def play_and_record(
             progress.close()
 
         # Reset environment for next demonstration
-        game_state = carmunk.GameState(weights, track_file)
+        game_state = (
+            carmunk.GameState(weights)
+            if track_file is None
+            else carmunk.GameState(weights, track_file)
+        )
+        game_state.load_environment(track_file)
+        game_state.reset()
 
 
 def main():

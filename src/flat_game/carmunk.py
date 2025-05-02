@@ -67,9 +67,6 @@ class GameState:
         # Store track file for reset
         self.obstacle_file = obstacle_file
         
-        # Initialize environment
-        self.load_environment(obstacle_file)
-
         # Add reward tracking
         self.current_reward = 0
         self.total_reward = 0
