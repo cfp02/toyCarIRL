@@ -356,8 +356,13 @@ class GameState:
         return self.is_in_goal
 
     def frame_step(self, action):
-        # Reset goal state at start of each frame
-        self.is_in_goal = False
+        # Don't reset goal state here - it should only be reset when explicitly requested
+        # self.is_in_goal = False
+        
+        if self.crashed:
+            self.reset()
+            state = self.get_state()
+            return 0.0, state, self.get_features(), self.collision_count
         
         # Update space damping
         self.space.damping = 0.1  # Set to lower value for more damping
@@ -404,12 +409,6 @@ class GameState:
         reward = self.calculate_reward()
         self.current_reward += reward  # Track current episode reward
         features = self.get_features()
-        
-        # Check if goal is reached and reset if needed
-        if self.is_in_goal:
-            print("Goal reached! Resetting environment...")
-            self.reset()
-            return reward, state, features, self.collision_count
         
         # Return state and reward
         return reward, state, features, self.collision_count

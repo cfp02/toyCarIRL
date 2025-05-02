@@ -276,12 +276,17 @@ def play_and_record(
                 # Check if demonstration is complete
                 if game_state.is_in_goal:
                     print(f"✅ Demonstration {demo_count + 1} completed successfully!")
+                    print(f"Debug: is_in_goal={game_state.is_in_goal}, step_count={recorder.step_count}")
+                    print(f"Debug: Current collision count: {collision_count}")
                     # Save the trajectory immediately
                     timestamp = time.strftime("%Y%m%d_%H%M%S")
                     filename = str(demo_dir / f"demo_{timestamp}.json")
+                    print(f"Debug: Attempting to save trajectory to {filename}")
                     recorder.save_trajectory(filename)
+                    print(f"Debug: Trajectory saved successfully")
                     demonstrations.append(recorder)
                     demo_count += 1
+                    print(f"Debug: Creating new game state for next demonstration")
                     # Reset environment for next demonstration
                     game_state = carmunk.GameState(weights, track_file)
                     running = False
