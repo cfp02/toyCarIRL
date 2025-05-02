@@ -64,7 +64,6 @@ class TrajectoryRecorder:
         """Reset the recorder for a new trajectory."""
         self.states = []
         self.actions = []
-        self.rewards = []
         self.features = []
         self.collisions = []  # Track collision count at each step
         self.feature_expectations = np.zeros(self.feature_dim)
@@ -77,7 +76,6 @@ class TrajectoryRecorder:
         self,
         state: np.ndarray,
         action: int,
-        reward: float,
         features: List[float],
         collision_count: int,
         is_in_goal: bool,
@@ -88,14 +86,12 @@ class TrajectoryRecorder:
         Args:
             state: The environment state
             action: The action taken
-            reward: The reward received
             features: The feature vector
             collision_count: Current collision count
             is_in_goal: Whether the object is in the goal zone
         """
         self.states.append(state.copy())
         self.actions.append(action)
-        self.rewards.append(reward)
         self.features.append(features.copy())
         self.collisions.append(collision_count)
         self.is_in_goal = is_in_goal
@@ -148,7 +144,6 @@ class TrajectoryRecorder:
                 s.tolist() if isinstance(s, np.ndarray) else s for s in self.states
             ],
             "actions": self.actions,
-            "rewards": self.rewards,
             "features": self.features,
             "collisions": self.collisions,
             "feature_expectations": self.feature_expectations.tolist(),
@@ -172,17 +167,15 @@ def play_and_record(
     track_file: Optional[str] = None,
     output_file: Optional[str] = None,
     fps: int = DEFAULT_FPS,
-    num_demos: int = 5,
     task_name: str = "pushing",
 ) -> None:
     """
-    Play the game with manual control and record expert trajectory.
+    Play the game with manual control and record expert trajectories.
 
     Args:
         track_file: Path to track configuration file
         output_file: Path to save the trajectory data
         fps: Frames per second for game display
-        num_demos: Number of demonstrations to collect
         task_name: Name of the task (e.g., "pushing")
     """
     # Initialize weights to all 1.0
@@ -193,8 +186,6 @@ def play_and_record(
         else carmunk.GameState(weights, track_file)
     )
 
-    demonstrations = []
-    demo_count = 0
     demo_dir = get_demo_dir(task_name)
 
     # Print instructions
@@ -208,17 +199,16 @@ def play_and_record(
     print("  R: Reset current demonstration")
     print("  Q: Quit collection")
     print(f"Recording at {fps} FPS. Max episode length: {MAX_EPISODE_LENGTH} steps.")
-    print(f"Collecting {num_demos} demonstrations.")
     print(f"Demonstrations will be saved to: {demo_dir}\n")
 
-    while demo_count < num_demos:
+    while True:  # Continue until user quits
         recorder = TrajectoryRecorder(weights, task_name)
         reward, state, features, collision_count = game_state.frame_step(2)  # Start with forward motion
 
         clock = pygame.time.Clock()
         progress = tqdm(
             total=MAX_EPISODE_LENGTH,
-            desc=f"Recording demonstration {demo_count + 1}/{num_demos}",
+            desc="Recording demonstration",
             unit="steps",
             dynamic_ncols=True,
         )
@@ -232,6 +222,7 @@ def play_and_record(
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT:
                         running = False
+                        return
                     elif event.type == pygame.KEYDOWN:
                         if event.key == pygame.K_LEFT:
                             action = 1
@@ -246,7 +237,7 @@ def play_and_record(
                             running = False
                             break
                         elif event.key == pygame.K_q:
-                            return demonstrations
+                            return
                     elif event.type == pygame.KEYUP:
                         # When key is released, go back to forward motion
                         if event.key in [pygame.K_LEFT, pygame.K_RIGHT]:
@@ -257,7 +248,7 @@ def play_and_record(
 
                 # Record step
                 recorder.record_step(
-                    state, action, reward, features, collision_count, game_state.is_in_goal
+                    state, action, features, collision_count, game_state.is_in_goal
                 )
                 state = new_state
 
@@ -267,7 +258,7 @@ def play_and_record(
                     progress.update(0)
                     progress.set_postfix(
                         {
-                            "change": f"{recorder.get_change_percentage():.2f}%",
+                            "features": f"{features[:3]}...",
                             "collisions": collision_count,
                             "in_goal": game_state.is_in_goal,
                         }
@@ -275,7 +266,7 @@ def play_and_record(
 
                 # Check if demonstration is complete
                 if game_state.is_in_goal:
-                    print(f"✅ Demonstration {demo_count + 1} completed successfully!")
+                    print(f"✅ Demonstration completed successfully!")
                     print(f"Debug: is_in_goal={game_state.is_in_goal}, step_count={recorder.step_count}")
                     print(f"Debug: Current collision count: {collision_count}")
                     # Save the trajectory immediately
@@ -284,11 +275,6 @@ def play_and_record(
                     print(f"Debug: Attempting to save trajectory to {filename}")
                     recorder.save_trajectory(filename)
                     print(f"Debug: Trajectory saved successfully")
-                    demonstrations.append(recorder)
-                    demo_count += 1
-                    print(f"Debug: Creating new game state for next demonstration")
-                    # Reset environment for next demonstration
-                    game_state = carmunk.GameState(weights, track_file)
                     running = False
                     break
 
@@ -297,7 +283,8 @@ def play_and_record(
         finally:
             progress.close()
 
-    return demonstrations
+        # Reset environment for next demonstration
+        game_state = carmunk.GameState(weights, track_file)
 
 
 def main():
@@ -320,12 +307,6 @@ def main():
         help=f"Frames per second (default: {DEFAULT_FPS})",
     )
     parser.add_argument(
-        "--num-demos",
-        type=int,
-        default=5,
-        help="Number of demonstrations to collect (default: 5)",
-    )
-    parser.add_argument(
         "--task",
         type=str,
         default="pushing",
@@ -333,19 +314,14 @@ def main():
     )
     args = parser.parse_args()
 
-    # Collect demonstrations
-    print(f"Collecting {args.num_demos} demonstrations using track: {args.track}")
-    demonstrations = play_and_record(
+    # Collect demonstration
+    print(f"Collecting demonstration using track: {args.track}")
+    play_and_record(
         track_file=args.track,
         output_file=args.output,
         fps=args.fps,
-        num_demos=args.num_demos,
         task_name=args.task,
     )
-
-    if demonstrations:
-        print(f"\nSuccessfully collected {len(demonstrations)} demonstrations!")
-        print(f"Demonstrations saved in: {get_demo_dir(args.task)}")
 
 
 if __name__ == "__main__":

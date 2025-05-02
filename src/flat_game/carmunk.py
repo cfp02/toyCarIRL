@@ -390,24 +390,23 @@ class GameState:
             screen.fill(THECOLORS["black"])  # Clear screen
             self.space.debug_draw(draw_options)  # Draw physics objects
             
-            # Draw reward information
-            reward_text = self.font.render(f'Current Reward: {self.current_reward:.2f}', True, THECOLORS["white"])
-            total_text = self.font.render(f'Total Reward: {self.total_reward:.2f}', True, THECOLORS["white"])
-            episodes_text = self.font.render(f'Episodes: {len(self.episode_rewards)}', True, THECOLORS["white"])
+            # Draw state information
+            state_text = self.font.render(f'State: {self.get_state()[:3]}...', True, THECOLORS["white"])
+            features_text = self.font.render(f'Features: {self.get_features()[:3]}...', True, THECOLORS["white"])
             goal_text = self.font.render(f'Goal: {"Reached" if self.is_in_goal else "Not Reached"}', True, THECOLORS["white"])
+            collisions_text = self.font.render(f'Collisions: {self.collision_count}', True, THECOLORS["white"])
             
             # Position text on the right side of the screen
-            screen.blit(reward_text, (width - 300, 20))
-            screen.blit(total_text, (width - 300, 50))
-            screen.blit(episodes_text, (width - 300, 80))
-            screen.blit(goal_text, (width - 300, 110))
+            screen.blit(state_text, (width - 300, 20))
+            screen.blit(features_text, (width - 300, 50))
+            screen.blit(goal_text, (width - 300, 80))
+            screen.blit(collisions_text, (width - 300, 110))
             
             pygame.display.flip()
         
         # Get state and reward
         state = self.get_state()
-        reward = self.calculate_reward()
-        self.current_reward += reward  # Track current episode reward
+        reward = self.calculate_reward()  # Keep reward calculation for now
         features = self.get_features()
         
         # Return state and reward
